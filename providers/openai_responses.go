@@ -139,11 +139,25 @@ func responseUsage(resp *responses.Response) TokenUsage {
 	}
 	cachedTokens := resp.Usage.InputTokensDetails.CachedTokens
 	return TokenUsage{
-		InputTokens:     resp.Usage.InputTokens - cachedTokens,
-		OutputTokens:    resp.Usage.OutputTokens,
+		InputTokens:         resp.Usage.InputTokens - cachedTokens,
+		OutputTokens:        resp.Usage.OutputTokens,
 		CacheCreationTokens: 0,
-		CacheReadTokens: cachedTokens,
+		CacheReadTokens:     cachedTokens,
 	}
+}
+
+// responsesFinishReason maps Responses API status to the library's FinishReason.
+func responsesFinishReason(status responses.ResponseStatus, toolCalls []message.ToolCall) message.FinishReason {
+	reason := message.FinishReasonEndTurn
+	if status == "incomplete" {
+		reason = message.FinishReasonMaxTokens
+	} else if status == "failed" {
+		reason = message.FinishReasonError
+	}
+	if len(toolCalls) > 0 {
+		reason = message.FinishReasonToolUse
+	}
+	return reason
 }
 
 // prepareResponseParams builds the common ResponseNewParams for all Responses API calls.
@@ -207,23 +221,12 @@ func (o *openaiClient) sendResponses(
 			}
 
 			content, toolCalls := parseResponseOutput(resp)
-			usage := responseUsage(resp)
-
-			finishReason := message.FinishReasonEndTurn
-			if resp.Status == "incomplete" {
-				finishReason = message.FinishReasonMaxTokens
-			} else if resp.Status == "failed" {
-				finishReason = message.FinishReasonError
-			}
-			if len(toolCalls) > 0 {
-				finishReason = message.FinishReasonToolUse
-			}
 
 			return &Response{
 				Content:      content,
 				ToolCalls:    toolCalls,
-				Usage:        usage,
-				FinishReason: finishReason,
+				Usage:        responseUsage(resp),
+				FinishReason: responsesFinishReason(resp.Status, toolCalls),
 			}, nil
 		},
 	)
@@ -334,8 +337,8 @@ func (o *openaiClient) streamResponses(
 
 				case responses.ResponseReasoningSummaryTextDeltaEvent:
 					eventChan <- Event{
-						Type:    types.EventThinkingDelta,
-						Content: v.Delta,
+						Type:     types.EventThinkingDelta,
+						Thinking: v.Delta,
 					}
 
 				default:
@@ -348,20 +351,10 @@ func (o *openaiClient) streamResponses(
 				return err
 			}
 
-			finishReason := message.FinishReasonEndTurn
-			if finalResponse != nil {
-				if finalResponse.Status == "incomplete" {
-					finishReason = message.FinishReasonMaxTokens
-				} else if finalResponse.Status == "failed" {
-					finishReason = message.FinishReasonError
-				}
-			}
-			if len(toolCalls) > 0 {
-				finishReason = message.FinishReasonToolUse
-			}
-
+			var status responses.ResponseStatus
 			var usage TokenUsage
 			if finalResponse != nil {
+				status = finalResponse.Status
 				usage = responseUsage(finalResponse)
 			}
 
@@ -371,7 +364,7 @@ func (o *openaiClient) streamResponses(
 					Content:      currentContent,
 					ToolCalls:    toolCalls,
 					Usage:        usage,
-					FinishReason: finishReason,
+					FinishReason: responsesFinishReason(status, toolCalls),
 				},
 			}
 			return nil
@@ -421,18 +414,12 @@ func (o *openaiClient) sendResponsesWithStructuredOutput(
 			}
 
 			content, toolCalls := parseResponseOutput(resp)
-			usage := responseUsage(resp)
-
-			finishReason := o.finishReason("stop")
-			if len(toolCalls) > 0 {
-				finishReason = message.FinishReasonToolUse
-			}
 
 			return &Response{
 				Content:                    content,
 				ToolCalls:                  toolCalls,
-				Usage:                      usage,
-				FinishReason:               finishReason,
+				Usage:                      responseUsage(resp),
+				FinishReason:               responsesFinishReason(resp.Status, toolCalls),
 				StructuredOutput:           &content,
 				UsedNativeStructuredOutput: true,
 			}, nil
@@ -525,13 +512,10 @@ func (o *openaiClient) streamResponsesWithStructuredOutput(
 				return err
 			}
 
-			finishReason := message.FinishReasonEndTurn
-			if len(toolCalls) > 0 {
-				finishReason = message.FinishReasonToolUse
-			}
-
+			var status responses.ResponseStatus
 			var usage TokenUsage
 			if finalResponse != nil {
+				status = finalResponse.Status
 				usage = responseUsage(finalResponse)
 			}
 
@@ -541,7 +525,7 @@ func (o *openaiClient) streamResponsesWithStructuredOutput(
 					Content:                    currentContent,
 					ToolCalls:                  toolCalls,
 					Usage:                      usage,
-					FinishReason:               finishReason,
+					FinishReason:               responsesFinishReason(status, toolCalls),
 					StructuredOutput:           &currentContent,
 					UsedNativeStructuredOutput: true,
 				},

@@ -373,6 +373,7 @@ func (o *openaiClient) stream(
 
 		ExecuteStreamWithRetry(ctx, OpenAIRetryConfig(), func() error {
 			openaiStream := o.client.Chat.Completions.NewStreaming(ctx, params)
+			defer openaiStream.Close()
 
 			acc := openai.ChatCompletionAccumulator{}
 			currentContent := ""
@@ -660,6 +661,7 @@ func (o *openaiClient) streamWithStructuredOutput(
 
 		ExecuteStreamWithRetry(ctx, OpenAIRetryConfig(), func() error {
 			openaiStream := o.client.Chat.Completions.NewStreaming(ctx, params)
+			defer openaiStream.Close()
 
 			acc := openai.ChatCompletionAccumulator{}
 			currentContent := ""
