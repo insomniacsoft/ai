@@ -3,10 +3,10 @@ package llm
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/joakimcarlsson/ai/message"
+	"github.com/joakimcarlsson/ai/model"
 	"github.com/joakimcarlsson/ai/schema"
 	"github.com/joakimcarlsson/ai/tool"
 	"github.com/joakimcarlsson/ai/types"
@@ -38,18 +38,45 @@ func (o *openaiClient) convertResponseMessages(
 			systemParts = append(systemParts, msg.Content().String())
 
 		case message.User:
-			items = append(items,
-				responses.ResponseInputItemParamOfMessage(msg.Content().String(), "user"),
-			)
+			// Build content parts list for multimodal support.
+			var contentParts responses.ResponseInputMessageContentListParam
+
+			if text := msg.Content().String(); text != "" {
+				contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
+					OfInputText: &responses.ResponseInputTextParam{
+						Text: text,
+					},
+				})
+			}
+
+			for _, bc := range msg.BinaryContent() {
+				contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
+					OfInputImage: &responses.ResponseInputImageParam{
+						ImageURL: param.NewOpt("data:" + bc.MIMEType + ";base64," + bc.String(model.ProviderOpenAI)),
+					},
+				})
+			}
+
+			for _, iuc := range msg.ImageURLContent() {
+				contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
+					OfInputImage: &responses.ResponseInputImageParam{
+						ImageURL: param.NewOpt(iuc.URL),
+					},
+				})
+			}
+
+			if len(contentParts) > 0 {
+				items = append(items,
+					responses.ResponseInputItemParamOfMessage(contentParts, "user"),
+				)
+			}
 
 		case message.Assistant:
-			// Text content as a separate message item
 			if text := msg.Content().String(); text != "" {
 				items = append(items,
 					responses.ResponseInputItemParamOfMessage(text, "assistant"),
 				)
 			}
-			// Each tool call as a separate function_call input item
 			for _, tc := range msg.ToolCalls() {
 				items = append(items,
 					responses.ResponseInputItemParamOfFunctionCall(tc.Input, tc.ID, tc.Name),
@@ -64,7 +91,6 @@ func (o *openaiClient) convertResponseMessages(
 			}
 
 		case message.Summary:
-			// Summaries are stored as User role when sending to LLM
 			items = append(items,
 				responses.ResponseInputItemParamOfMessage(msg.Content().String(), "user"),
 			)
@@ -74,8 +100,7 @@ func (o *openaiClient) convertResponseMessages(
 	input := responses.ResponseNewParamsInputUnion{
 		OfInputItemList: responses.ResponseInputParam(items),
 	}
-	instructions := strings.Join(systemParts, "\n\n")
-	return input, instructions
+	return input, strings.Join(systemParts, "\n\n")
 }
 
 // convertResponseTools converts library tools to Responses API flat format.
@@ -160,6 +185,27 @@ func responsesFinishReason(status responses.ResponseStatus, toolCalls []message.
 	return reason
 }
 
+// applyResponsesSchema sets the structured output JSON schema on params.
+func applyResponsesSchema(params *responses.ResponseNewParams, outputSchema *schema.StructuredOutputInfo) {
+	schemaMap := map[string]any{
+		"type":                 "object",
+		"properties":           outputSchema.Parameters,
+		"additionalProperties": false,
+	}
+	if len(outputSchema.Required) > 0 {
+		schemaMap["required"] = outputSchema.Required
+	}
+	params.Text = responses.ResponseTextConfigParam{
+		Format: responses.ResponseFormatTextConfigUnionParam{
+			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
+				Name:   outputSchema.Name,
+				Schema: schemaMap,
+				Strict: param.NewOpt(true),
+			},
+		},
+	}
+}
+
 // prepareResponseParams builds the common ResponseNewParams for all Responses API calls.
 func (o *openaiClient) prepareResponseParams(
 	messages []message.Message,
@@ -233,12 +279,21 @@ func (o *openaiClient) sendResponses(
 }
 
 // streamResponses streams a response via the Responses API.
+// If structuredOutput is non-nil, applies JSON schema and marks response as structured.
 func (o *openaiClient) streamResponses(
 	ctx context.Context,
 	messages []message.Message,
 	tools []tool.BaseTool,
+	structuredOutput ...*schema.StructuredOutputInfo,
 ) <-chan Event {
 	params := o.prepareResponseParams(messages, tools)
+
+	var isStructured bool
+	if len(structuredOutput) > 0 && structuredOutput[0] != nil {
+		applyResponsesSchema(&params, structuredOutput[0])
+		isStructured = true
+	}
+
 	eventChan := make(chan Event)
 
 	go func() {
@@ -255,38 +310,38 @@ func (o *openaiClient) streamResponses(
 			var finalResponse *responses.Response
 
 			for stream.Next() {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
 				event := stream.Current()
 				switch v := event.AsAny().(type) {
 				case responses.ResponseTextDeltaEvent:
 					currentContent += v.Delta
-					eventChan <- Event{
+					if err := sendEvent(ctx, eventChan, Event{
 						Type:    types.EventContentDelta,
 						Content: v.Delta,
+					}); err != nil {
+						return err
 					}
 
 				case responses.ResponseOutputItemAddedEvent:
 					if v.Item.Type == "function_call" {
 						fc := v.Item.AsFunctionCall()
-						eventChan <- Event{
+						if err := sendEvent(ctx, eventChan, Event{
 							Type: types.EventToolUseStart,
 							ToolCall: &message.ToolCall{
 								ID:   fc.CallID,
 								Name: fc.Name,
 								Type: "function",
 							},
+						}); err != nil {
+							return err
 						}
 					}
 
 				case responses.ResponseFunctionCallArgumentsDeltaEvent:
-					eventChan <- Event{
+					if err := sendEvent(ctx, eventChan, Event{
 						Type:    types.EventToolUseDelta,
 						Content: v.Delta,
+					}); err != nil {
+						return err
 					}
 
 				case responses.ResponseOutputItemDoneEvent:
@@ -299,7 +354,7 @@ func (o *openaiClient) streamResponses(
 							Type:     "function",
 							Finished: true,
 						})
-						eventChan <- Event{
+						if err := sendEvent(ctx, eventChan, Event{
 							Type: types.EventToolUseStop,
 							ToolCall: &message.ToolCall{
 								ID:       fc.CallID,
@@ -308,6 +363,8 @@ func (o *openaiClient) streamResponses(
 								Type:     "function",
 								Finished: true,
 							},
+						}); err != nil {
+							return err
 						}
 					}
 
@@ -319,10 +376,10 @@ func (o *openaiClient) streamResponses(
 					if v.Response.Error.Message != "" {
 						errMsg = v.Response.Error.Message
 					}
-					eventChan <- Event{
+					_ = sendEvent(ctx, eventChan, Event{
 						Type:  types.EventError,
 						Error: errors.New(errMsg),
-					}
+					})
 					finalResponse = &v.Response
 
 				case responses.ResponseIncompleteEvent:
@@ -330,15 +387,19 @@ func (o *openaiClient) streamResponses(
 
 				case responses.ResponseRefusalDeltaEvent:
 					currentContent += v.Delta
-					eventChan <- Event{
+					if err := sendEvent(ctx, eventChan, Event{
 						Type:    types.EventContentDelta,
 						Content: v.Delta,
+					}); err != nil {
+						return err
 					}
 
 				case responses.ResponseReasoningSummaryTextDeltaEvent:
-					eventChan <- Event{
+					if err := sendEvent(ctx, eventChan, Event{
 						Type:     types.EventThinkingDelta,
 						Thinking: v.Delta,
+					}); err != nil {
+						return err
 					}
 
 				default:
@@ -347,7 +408,7 @@ func (o *openaiClient) streamResponses(
 			}
 
 			if err := stream.Err(); err != nil {
-				eventChan <- Event{Type: types.EventError, Error: err}
+				_ = sendEvent(ctx, eventChan, Event{Type: types.EventError, Error: err})
 				return err
 			}
 
@@ -358,15 +419,21 @@ func (o *openaiClient) streamResponses(
 				usage = responseUsage(finalResponse)
 			}
 
-			eventChan <- Event{
-				Type: types.EventComplete,
-				Response: &Response{
-					Content:      currentContent,
-					ToolCalls:    toolCalls,
-					Usage:        usage,
-					FinishReason: responsesFinishReason(status, toolCalls),
-				},
+			completeResp := &Response{
+				Content:      currentContent,
+				ToolCalls:    toolCalls,
+				Usage:        usage,
+				FinishReason: responsesFinishReason(status, toolCalls),
 			}
+			if isStructured {
+				completeResp.StructuredOutput = &currentContent
+				completeResp.UsedNativeStructuredOutput = true
+			}
+
+			_ = sendEvent(ctx, eventChan, Event{
+				Type:     types.EventComplete,
+				Response: completeResp,
+			})
 			return nil
 		}, eventChan)
 	}()
@@ -382,24 +449,7 @@ func (o *openaiClient) sendResponsesWithStructuredOutput(
 	outputSchema *schema.StructuredOutputInfo,
 ) (*Response, error) {
 	params := o.prepareResponseParams(messages, tools)
-
-	schemaMap := map[string]any{
-		"type":                 "object",
-		"properties":           outputSchema.Parameters,
-		"additionalProperties": false,
-	}
-	if len(outputSchema.Required) > 0 {
-		schemaMap["required"] = outputSchema.Required
-	}
-	params.Text = responses.ResponseTextConfigParam{
-		Format: responses.ResponseFormatTextConfigUnionParam{
-			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
-				Name:   outputSchema.Name,
-				Schema: schemaMap,
-				Strict: param.NewOpt(true),
-			},
-		},
-	}
+	applyResponsesSchema(&params, outputSchema)
 
 	ctx, cancel := withTimeout(ctx, o.providerOptions.timeout)
 	defer cancel()
@@ -427,112 +477,12 @@ func (o *openaiClient) sendResponsesWithStructuredOutput(
 	)
 }
 
-// streamResponsesWithStructuredOutput streams a structured output response.
+// streamResponsesWithStructuredOutput delegates to streamResponses with schema applied.
 func (o *openaiClient) streamResponsesWithStructuredOutput(
 	ctx context.Context,
 	messages []message.Message,
 	tools []tool.BaseTool,
 	outputSchema *schema.StructuredOutputInfo,
 ) <-chan Event {
-	params := o.prepareResponseParams(messages, tools)
-
-	schemaMap := map[string]any{
-		"type":                 "object",
-		"properties":           outputSchema.Parameters,
-		"additionalProperties": false,
-	}
-	if len(outputSchema.Required) > 0 {
-		schemaMap["required"] = outputSchema.Required
-	}
-	params.Text = responses.ResponseTextConfigParam{
-		Format: responses.ResponseFormatTextConfigUnionParam{
-			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
-				Name:   outputSchema.Name,
-				Schema: schemaMap,
-				Strict: param.NewOpt(true),
-			},
-		},
-	}
-
-	eventChan := make(chan Event)
-
-	go func() {
-		ctx, cancel := withTimeout(ctx, o.providerOptions.timeout)
-		defer cancel()
-		defer close(eventChan)
-
-		ExecuteStreamWithRetry(ctx, OpenAIRetryConfig(), func() error {
-			stream := o.client.Responses.NewStreaming(ctx, params)
-			defer stream.Close()
-
-			currentContent := ""
-			toolCalls := []message.ToolCall{}
-			var finalResponse *responses.Response
-
-			for stream.Next() {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				default:
-				}
-
-				event := stream.Current()
-				switch v := event.AsAny().(type) {
-				case responses.ResponseTextDeltaEvent:
-					currentContent += v.Delta
-					eventChan <- Event{
-						Type:    types.EventContentDelta,
-						Content: v.Delta,
-					}
-				case responses.ResponseOutputItemDoneEvent:
-					if v.Item.Type == "function_call" {
-						fc := v.Item.AsFunctionCall()
-						toolCalls = append(toolCalls, message.ToolCall{
-							ID:       fc.CallID,
-							Name:     fc.Name,
-							Input:    fc.Arguments,
-							Type:     "function",
-							Finished: true,
-						})
-					}
-				case responses.ResponseCompletedEvent:
-					finalResponse = &v.Response
-				case responses.ResponseFailedEvent:
-					errMsg := fmt.Sprintf("response failed: %s", v.Response.Error.Message)
-					eventChan <- Event{Type: types.EventError, Error: errors.New(errMsg)}
-					finalResponse = &v.Response
-				case responses.ResponseIncompleteEvent:
-					finalResponse = &v.Response
-				default:
-				}
-			}
-
-			if err := stream.Err(); err != nil {
-				eventChan <- Event{Type: types.EventError, Error: err}
-				return err
-			}
-
-			var status responses.ResponseStatus
-			var usage TokenUsage
-			if finalResponse != nil {
-				status = finalResponse.Status
-				usage = responseUsage(finalResponse)
-			}
-
-			eventChan <- Event{
-				Type: types.EventComplete,
-				Response: &Response{
-					Content:                    currentContent,
-					ToolCalls:                  toolCalls,
-					Usage:                      usage,
-					FinishReason:               responsesFinishReason(status, toolCalls),
-					StructuredOutput:           &currentContent,
-					UsedNativeStructuredOutput: true,
-				},
-			}
-			return nil
-		}, eventChan)
-	}()
-
-	return eventChan
+	return o.streamResponses(ctx, messages, tools, outputSchema)
 }
