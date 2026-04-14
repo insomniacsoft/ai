@@ -74,6 +74,10 @@ type ToolCall struct {
 	Type string `json:"type"`
 	// Finished indicates whether the tool call has completed execution.
 	Finished bool `json:"finished"`
+	// ThoughtSignature holds the opaque encrypted signature required by Gemini
+	// for function call round-trips. Nil for all other providers.
+	// If a second provider-specific field is ever needed, refactor to ProviderMeta.
+	ThoughtSignature []byte `json:"thought_signature,omitempty"`
 }
 
 func (ToolCall) isPart() {}
