@@ -223,6 +223,92 @@ func TestConvertResponseMessages_AssistantTextOnly(t *testing.T) {
 	}
 }
 
+func TestConvertResponseMessages_UserWithBinaryContent(t *testing.T) {
+	client := makeOpenAIClient(true, "")
+	msgs := []message.Message{
+		message.NewMessage(message.User, []message.ContentPart{
+			message.TextContent{Text: "What is in this image?"},
+			message.BinaryContent{
+				MIMEType: "image/png",
+				Data:     []byte{0x89, 0x50, 0x4E, 0x47}, // PNG header bytes
+			},
+		}),
+	}
+
+	input, _ := client.convertResponseMessages(msgs)
+	items := input.OfInputItemList
+
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	data, _ := json.Marshal(items[0])
+	jsonStr := string(data)
+
+	// Should have content array with text + image parts
+	if !strings.Contains(jsonStr, "input_text") {
+		t.Error("expected input_text content part for text")
+	}
+	if !strings.Contains(jsonStr, "input_image") {
+		t.Error("expected input_image content part for binary image")
+	}
+	// Verify it's a data URI (not double-prefixed)
+	if !strings.Contains(jsonStr, "data:image/png;base64,") {
+		t.Error("expected data URI for binary content")
+	}
+	if strings.Contains(jsonStr, "data:image/png;base64,data:") {
+		t.Error("double data-URI prefix detected")
+	}
+}
+
+func TestConvertResponseMessages_UserWithImageURL(t *testing.T) {
+	client := makeOpenAIClient(true, "")
+	msgs := []message.Message{
+		message.NewMessage(message.User, []message.ContentPart{
+			message.TextContent{Text: "Describe this"},
+			message.ImageURLContent{URL: "https://example.com/photo.jpg", Detail: "high"},
+		}),
+	}
+
+	input, _ := client.convertResponseMessages(msgs)
+	items := input.OfInputItemList
+
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(items))
+	}
+
+	data, _ := json.Marshal(items[0])
+	jsonStr := string(data)
+
+	if !strings.Contains(jsonStr, "https://example.com/photo.jpg") {
+		t.Error("expected image URL in serialized output")
+	}
+	if !strings.Contains(jsonStr, `"detail":"high"`) {
+		t.Errorf("expected detail=high in serialized output, got: %s", jsonStr)
+	}
+}
+
+func TestConvertResponseMessages_UserWithImageURLNoDetail(t *testing.T) {
+	client := makeOpenAIClient(true, "")
+	msgs := []message.Message{
+		message.NewMessage(message.User, []message.ContentPart{
+			message.TextContent{Text: "What's this?"},
+			message.ImageURLContent{URL: "https://example.com/photo.jpg"},
+		}),
+	}
+
+	input, _ := client.convertResponseMessages(msgs)
+	items := input.OfInputItemList
+
+	data, _ := json.Marshal(items[0])
+	jsonStr := string(data)
+
+	// When Detail is empty, it should not be serialized
+	if strings.Contains(jsonStr, `"detail"`) {
+		t.Errorf("empty Detail should not appear in JSON, got: %s", jsonStr)
+	}
+}
+
 func TestConvertResponseMessages_AssistantToolCalls(t *testing.T) {
 	client := makeOpenAIClient(true, "")
 	msgs := []message.Message{
