@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/joakimcarlsson/ai/message"
@@ -87,7 +88,7 @@ func TestNewResponseParams_StoreNotOmitted(t *testing.T) {
 	}
 
 	jsonStr := string(data)
-	if !contains(jsonStr, `"store":false`) && !contains(jsonStr, `"store": false`) {
+	if !strings.Contains(jsonStr, `"store":false`) && !strings.Contains(jsonStr, `"store": false`) {
 		t.Errorf("JSON does not contain store:false.\nGot: %s", jsonStr)
 	}
 }
@@ -761,6 +762,46 @@ func TestResponseUsage_NilResponse(t *testing.T) {
 	}
 }
 
+// ─── responsesFinishReason ─────────────────────────────────────────────────────
+
+func TestResponsesFinishReason_Completed(t *testing.T) {
+	reason := responsesFinishReason(responses.ResponseStatus("completed"), nil)
+	if reason != message.FinishReasonEndTurn {
+		t.Errorf("reason = %q, want %q", reason, message.FinishReasonEndTurn)
+	}
+}
+
+func TestResponsesFinishReason_Incomplete(t *testing.T) {
+	reason := responsesFinishReason(responses.ResponseStatus("incomplete"), nil)
+	if reason != message.FinishReasonMaxTokens {
+		t.Errorf("reason = %q, want %q", reason, message.FinishReasonMaxTokens)
+	}
+}
+
+func TestResponsesFinishReason_Failed(t *testing.T) {
+	reason := responsesFinishReason(responses.ResponseStatus("failed"), nil)
+	if reason != message.FinishReasonError {
+		t.Errorf("reason = %q, want %q", reason, message.FinishReasonError)
+	}
+}
+
+func TestResponsesFinishReason_ToolCallsOverride(t *testing.T) {
+	// Tool calls override status-based reason
+	toolCalls := []message.ToolCall{{ID: "call_1", Name: "test"}}
+	reason := responsesFinishReason(responses.ResponseStatus("completed"), toolCalls)
+	if reason != message.FinishReasonToolUse {
+		t.Errorf("reason = %q, want %q", reason, message.FinishReasonToolUse)
+	}
+}
+
+func TestResponsesFinishReason_EmptyStatus(t *testing.T) {
+	// Empty status (e.g., when finalResponse is nil) defaults to end_turn
+	reason := responsesFinishReason(responses.ResponseStatus(""), nil)
+	if reason != message.FinishReasonEndTurn {
+		t.Errorf("reason = %q, want %q", reason, message.FinishReasonEndTurn)
+	}
+}
+
 // ─── prepareResponseParams ─────────────────────────────────────────────────────
 
 func TestPrepareResponseParams_BasicFields(t *testing.T) {
@@ -952,7 +993,7 @@ func TestToolCall_ThoughtSignatureNilOmitted(t *testing.T) {
 	data, _ := json.Marshal(tc)
 	jsonStr := string(data)
 
-	if contains(jsonStr, "thought_signature") {
+	if strings.Contains(jsonStr, "thought_signature") {
 		t.Errorf("nil ThoughtSignature should be omitted from JSON.\nGot: %s", jsonStr)
 	}
 }
@@ -1011,17 +1052,3 @@ func TestMessage_ThoughtSignatureRoundTripThroughMessage(t *testing.T) {
 	}
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsImpl(s, substr))
-}
-
-func containsImpl(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
-}
