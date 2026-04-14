@@ -111,6 +111,7 @@ func (g *geminiClient) convertMessages(
 						Name: toolCall.Name,
 						Args: args,
 					},
+					ThoughtSignature: toolCall.ThoughtSignature,
 				})
 			}
 
@@ -286,11 +287,12 @@ func (g *geminiClient) send(
 						id := "call_" + uuid.New().String()
 						args, _ := json.Marshal(part.FunctionCall.Args)
 						toolCalls = append(toolCalls, message.ToolCall{
-							ID:       id,
-							Name:     part.FunctionCall.Name,
-							Input:    string(args),
-							Type:     "function",
-							Finished: true,
+							ID:               id,
+							Name:             part.FunctionCall.Name,
+							Input:            string(args),
+							Type:             "function",
+							Finished:         true,
+							ThoughtSignature: part.ThoughtSignature,
 						})
 					}
 				}
@@ -319,9 +321,6 @@ func (g *geminiClient) stream(
 	tools []tool.BaseTool,
 ) <-chan Event {
 	geminiMessages, systemMessages := g.convertMessages(messages)
-
-	ctx, cancel := withTimeout(ctx, g.providerOptions.timeout)
-	defer cancel()
 
 	history := geminiMessages[:len(geminiMessages)-1]
 	lastMsg := geminiMessages[len(geminiMessages)-1]
@@ -373,6 +372,8 @@ func (g *geminiClient) stream(
 	eventChan := make(chan Event)
 
 	go func() {
+		ctx, cancel := withTimeout(ctx, g.providerOptions.timeout)
+		defer cancel()
 		defer close(eventChan)
 
 		ExecuteStreamWithRetry(ctx, GeminiRetryConfig(), func() error {
@@ -414,11 +415,12 @@ func (g *geminiClient) stream(
 							id := "call_" + uuid.New().String()
 							args, _ := json.Marshal(part.FunctionCall.Args)
 							newCall := message.ToolCall{
-								ID:       id,
-								Name:     part.FunctionCall.Name,
-								Input:    string(args),
-								Type:     "function",
-								Finished: true,
+								ID:               id,
+								Name:             part.FunctionCall.Name,
+								Input:            string(args),
+								Type:             "function",
+								Finished:         true,
+								ThoughtSignature: part.ThoughtSignature,
 							}
 
 							isNew := true
@@ -680,10 +682,11 @@ func (g *geminiClient) sendWithStructuredOutput(
 					if part.FunctionCall != nil {
 						input, _ := json.Marshal(part.FunctionCall.Args)
 						toolCalls = append(toolCalls, message.ToolCall{
-							ID:    part.FunctionCall.Name,
-							Name:  part.FunctionCall.Name,
-							Input: string(input),
-							Type:  "function",
+							ID:               part.FunctionCall.Name,
+							Name:             part.FunctionCall.Name,
+							Input:            string(input),
+							Type:             "function",
+							ThoughtSignature: part.ThoughtSignature,
 						})
 					}
 				}
@@ -719,9 +722,6 @@ func (g *geminiClient) streamWithStructuredOutput(
 	outputSchema *schema.StructuredOutputInfo,
 ) <-chan Event {
 	geminiMessages, systemMessages := g.convertMessages(messages)
-
-	ctx, cancel := withTimeout(ctx, g.providerOptions.timeout)
-	defer cancel()
 
 	history := geminiMessages[:len(geminiMessages)-1]
 	lastMsg := geminiMessages[len(geminiMessages)-1]
@@ -779,6 +779,8 @@ func (g *geminiClient) streamWithStructuredOutput(
 	eventChan := make(chan Event)
 
 	go func() {
+		ctx, cancel := withTimeout(ctx, g.providerOptions.timeout)
+		defer cancel()
 		defer close(eventChan)
 
 		ExecuteStreamWithRetry(ctx, GeminiRetryConfig(), func() error {
@@ -820,11 +822,12 @@ func (g *geminiClient) streamWithStructuredOutput(
 							id := "call_" + uuid.New().String()
 							args, _ := json.Marshal(part.FunctionCall.Args)
 							newCall := message.ToolCall{
-								ID:       id,
-								Name:     part.FunctionCall.Name,
-								Input:    string(args),
-								Type:     "function",
-								Finished: true,
+								ID:               id,
+								Name:             part.FunctionCall.Name,
+								Input:            string(args),
+								Type:             "function",
+								Finished:         true,
+								ThoughtSignature: part.ThoughtSignature,
 							}
 
 							isNew := true
