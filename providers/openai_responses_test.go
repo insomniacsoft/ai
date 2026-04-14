@@ -898,10 +898,8 @@ func TestPrepareResponseParams_NoReasoningWhenNil(t *testing.T) {
 
 // ─── Structured output params ──────────────────────────────────────────────────
 
-func TestPrepareResponseParams_StructuredOutputSchema(t *testing.T) {
-	client := makeOpenAIClient(true, "")
-	msgs := []message.Message{message.NewUserMessage("Extract data")}
-	tools := []tool.BaseTool{}
+func TestApplyResponsesSchema_WithRequired(t *testing.T) {
+	params := responses.ResponseNewParams{}
 	outputSchema := &schema.StructuredOutputInfo{
 		Name: "person",
 		Parameters: map[string]any{
@@ -911,23 +909,7 @@ func TestPrepareResponseParams_StructuredOutputSchema(t *testing.T) {
 		Required: []string{"name"},
 	}
 
-	params := client.prepareResponseParams(msgs, tools)
-
-	// Apply structured output (same as sendResponsesWithStructuredOutput)
-	schemaMap := map[string]any{
-		"type":                 "object",
-		"properties":           outputSchema.Parameters,
-		"additionalProperties": false,
-	}
-	schemaMap["required"] = outputSchema.Required
-	params.Text = responses.ResponseTextConfigParam{
-		Format: responses.ResponseFormatTextConfigUnionParam{
-			OfJSONSchema: &responses.ResponseFormatTextJSONSchemaConfigParam{
-				Name:   outputSchema.Name,
-				Schema: schemaMap,
-			},
-		},
-	}
+	applyResponsesSchema(&params, outputSchema)
 
 	data, _ := json.Marshal(params)
 	var raw map[string]any
@@ -946,6 +928,49 @@ func TestPrepareResponseParams_StructuredOutputSchema(t *testing.T) {
 	}
 	if format["name"] != "person" {
 		t.Errorf("format.name = %v, want person", format["name"])
+	}
+	if format["strict"] != true {
+		t.Errorf("format.strict = %v, want true", format["strict"])
+	}
+
+	schemaObj, ok := format["schema"].(map[string]any)
+	if !ok {
+		t.Fatal("schema not present in format")
+	}
+	if schemaObj["additionalProperties"] != false {
+		t.Errorf("additionalProperties = %v, want false", schemaObj["additionalProperties"])
+	}
+	req, ok := schemaObj["required"].([]any)
+	if !ok {
+		t.Fatal("required not present in schema")
+	}
+	if len(req) != 1 || req[0] != "name" {
+		t.Errorf("required = %v, want [name]", req)
+	}
+}
+
+func TestApplyResponsesSchema_NoRequired(t *testing.T) {
+	params := responses.ResponseNewParams{}
+	outputSchema := &schema.StructuredOutputInfo{
+		Name: "status",
+		Parameters: map[string]any{
+			"ok": map[string]any{"type": "boolean"},
+		},
+		Required: nil,
+	}
+
+	applyResponsesSchema(&params, outputSchema)
+
+	data, _ := json.Marshal(params)
+	var raw map[string]any
+	json.Unmarshal(data, &raw)
+
+	text := raw["text"].(map[string]any)
+	format := text["format"].(map[string]any)
+	schemaObj := format["schema"].(map[string]any)
+
+	if _, hasRequired := schemaObj["required"]; hasRequired {
+		t.Error("should not include 'required' key when no required params")
 	}
 }
 
