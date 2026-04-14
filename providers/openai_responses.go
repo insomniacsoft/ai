@@ -52,7 +52,7 @@ func (o *openaiClient) convertResponseMessages(
 			for _, bc := range msg.BinaryContent() {
 				contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
 					OfInputImage: &responses.ResponseInputImageParam{
-						ImageURL: param.NewOpt("data:" + bc.MIMEType + ";base64," + bc.String(model.ProviderOpenAI)),
+						ImageURL: param.NewOpt(bc.String(model.ProviderOpenAI)),
 					},
 				})
 			}
