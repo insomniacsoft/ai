@@ -207,6 +207,18 @@ type Event struct {
 	Error error
 }
 
+// sendEvent sends an event to the channel with context cancellation awareness.
+// Returns ctx.Err() if the context is cancelled before the send completes.
+// This prevents goroutine leaks when consumers disconnect mid-stream.
+func sendEvent(ctx context.Context, ch chan<- Event, e Event) error {
+	select {
+	case ch <- e:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 // LLM defines the interface for interacting with Large Language Model providers.
 // It provides methods for both synchronous and streaming interactions, with support
 // for tool calling and structured output generation.

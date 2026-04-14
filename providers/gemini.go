@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -105,7 +106,10 @@ func (g *geminiClient) convertMessages(
 
 			for _, toolCall := range msg.ToolCalls() {
 				var args map[string]interface{}
-				json.Unmarshal([]byte(toolCall.Input), &args)
+				if err := json.Unmarshal([]byte(toolCall.Input), &args); err != nil {
+					slog.Warn("gemini: malformed tool call arguments",
+						"tool", toolCall.Name, "error", err)
+				}
 				parts = append(parts, &genai.Part{
 					FunctionCall: &genai.FunctionCall{
 						Name: toolCall.Name,

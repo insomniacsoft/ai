@@ -34,7 +34,11 @@ func newAzureClient(opts llmClientOptions) AzureClient {
 	}
 
 	if azureOpts.endpoint == "" || azureOpts.apiVersion == "" {
-		return &azureClient{openaiClient: newOpenAIClient(opts).(*openaiClient)}
+		// Fallback to direct OpenAI client — force useResponses=false since this
+		// is a misconfigured Azure client, not an intentional direct-OpenAI call.
+		client := newOpenAIClient(opts).(*openaiClient)
+		client.useResponses = false
+		return &azureClient{openaiClient: client}
 	}
 
 	reqOpts := []option.RequestOption{
