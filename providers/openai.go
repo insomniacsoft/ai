@@ -45,6 +45,10 @@ type openaiClient struct {
 	providerOptions llmClientOptions
 	options         openaiOptions
 	client          openai.Client
+	// useResponses routes to /v1/responses for reasoning models on direct OpenAI API.
+	// Azure clients embed *openaiClient but never set this flag (Azure doesn't support /v1/responses).
+	// GROQ, XAI, Mistral, OpenRouter all set custom baseURLs, so this is always false for them.
+	useResponses bool
 }
 
 // OpenAIClient is the OpenAI Client implementation type.
@@ -84,6 +88,7 @@ func newOpenAIClient(opts llmClientOptions) OpenAIClient {
 		providerOptions: opts,
 		options:         openaiOpts,
 		client:          client,
+		useResponses:    opts.model.CanReason && openaiOpts.baseURL == "",
 	}
 }
 
@@ -293,6 +298,9 @@ func (o *openaiClient) send(
 	messages []message.Message,
 	tools []tool.BaseTool,
 ) (response *Response, err error) {
+	if o.useResponses {
+		return o.sendResponses(ctx, messages, tools)
+	}
 	params := o.preparedParams(
 		o.convertMessages(messages),
 		o.convertTools(tools),
@@ -345,6 +353,9 @@ func (o *openaiClient) stream(
 	messages []message.Message,
 	tools []tool.BaseTool,
 ) <-chan Event {
+	if o.useResponses {
+		return o.streamResponses(ctx, messages, tools)
+	}
 	params := o.preparedParams(
 		o.convertMessages(messages),
 		o.convertTools(tools),
@@ -353,12 +364,11 @@ func (o *openaiClient) stream(
 		IncludeUsage: openai.Bool(true),
 	}
 
-	ctx, cancel := withTimeout(ctx, o.providerOptions.timeout)
-	defer cancel()
-
 	eventChan := make(chan Event)
 
 	go func() {
+		ctx, cancel := withTimeout(ctx, o.providerOptions.timeout)
+		defer cancel()
 		defer close(eventChan)
 
 		ExecuteStreamWithRetry(ctx, OpenAIRetryConfig(), func() error {
@@ -533,6 +543,9 @@ func (o *openaiClient) sendWithStructuredOutput(
 	tools []tool.BaseTool,
 	outputSchema *schema.StructuredOutputInfo,
 ) (response *Response, err error) {
+	if o.useResponses {
+		return o.sendResponsesWithStructuredOutput(ctx, messages, tools, outputSchema)
+	}
 	params := o.preparedParams(
 		o.convertMessages(messages),
 		o.convertTools(tools),
@@ -607,6 +620,9 @@ func (o *openaiClient) streamWithStructuredOutput(
 	tools []tool.BaseTool,
 	outputSchema *schema.StructuredOutputInfo,
 ) <-chan Event {
+	if o.useResponses {
+		return o.streamResponsesWithStructuredOutput(ctx, messages, tools, outputSchema)
+	}
 	params := o.preparedParams(
 		o.convertMessages(messages),
 		o.convertTools(tools),
@@ -635,12 +651,11 @@ func (o *openaiClient) streamWithStructuredOutput(
 		IncludeUsage: openai.Bool(true),
 	}
 
-	ctx, cancel := withTimeout(ctx, o.providerOptions.timeout)
-	defer cancel()
-
 	eventChan := make(chan Event)
 
 	go func() {
+		ctx, cancel := withTimeout(ctx, o.providerOptions.timeout)
+		defer cancel()
 		defer close(eventChan)
 
 		ExecuteStreamWithRetry(ctx, OpenAIRetryConfig(), func() error {
