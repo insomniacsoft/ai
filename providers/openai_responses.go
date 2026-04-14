@@ -58,10 +58,14 @@ func (o *openaiClient) convertResponseMessages(
 			}
 
 			for _, iuc := range msg.ImageURLContent() {
+				img := &responses.ResponseInputImageParam{
+					ImageURL: param.NewOpt(iuc.URL),
+				}
+				if iuc.Detail != "" {
+					img.Detail = responses.ResponseInputImageDetail(iuc.Detail)
+				}
 				contentParts = append(contentParts, responses.ResponseInputContentUnionParam{
-					OfInputImage: &responses.ResponseInputImageParam{
-						ImageURL: param.NewOpt(iuc.URL),
-					},
+					OfInputImage: img,
 				})
 			}
 
