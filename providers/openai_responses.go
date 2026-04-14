@@ -104,6 +104,7 @@ func (o *openaiClient) convertResponseTools(
 }
 
 // parseResponseOutput extracts content and tool calls from Responses API output.
+// Uses flat struct fields directly (not AsMessage/AsFunctionCall which require JSON raw).
 // Does NOT retain references to the Response object — copies values for GC.
 func parseResponseOutput(resp *responses.Response) (string, []message.ToolCall) {
 	var contentParts []string
@@ -112,18 +113,16 @@ func parseResponseOutput(resp *responses.Response) (string, []message.ToolCall) 
 	for _, item := range resp.Output {
 		switch item.Type {
 		case "message":
-			msg := item.AsMessage()
-			for _, part := range msg.Content {
+			for _, part := range item.Content {
 				if part.Type == "output_text" {
 					contentParts = append(contentParts, part.Text)
 				}
 			}
 		case "function_call":
-			fc := item.AsFunctionCall()
 			toolCalls = append(toolCalls, message.ToolCall{
-				ID:       fc.CallID,
-				Name:     fc.Name,
-				Input:    fc.Arguments,
+				ID:       item.CallID,
+				Name:     item.Name,
+				Input:    item.Arguments,
 				Type:     "function",
 				Finished: true,
 			})
