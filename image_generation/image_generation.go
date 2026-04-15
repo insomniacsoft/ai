@@ -5,7 +5,6 @@ package image_generation
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -78,15 +77,12 @@ var ErrEditNotSupported = errors.New(
 
 // ImageGeneration defines the interface for generating and editing images.
 type ImageGeneration interface {
-	// GenerateImage creates one or more images from a text prompt.
 	GenerateImage(
 		ctx context.Context,
 		prompt string,
 		options ...GenerationOption,
 	) (*ImageGenerationResponse, error)
 
-	// GenerateImageStreaming streams partial images during generation.
-	// Returns ErrStreamingNotSupported if the model doesn't support streaming.
 	GenerateImageStreaming(
 		ctx context.Context,
 		prompt string,
@@ -94,9 +90,7 @@ type ImageGeneration interface {
 		options ...GenerationOption,
 	) error
 
-	// EditImage modifies an existing image based on a text prompt.
-	// The source image is provided via WithInputImage() option.
-	// Returns ErrEditNotSupported if the provider doesn't support editing.
+	// EditImage modifies an existing image. Source image via WithInputImage().
 	EditImage(
 		ctx context.Context,
 		prompt string,
@@ -104,7 +98,6 @@ type ImageGeneration interface {
 	) (*ImageGenerationResponse, error)
 
 	// EditImageStreaming streams partial previews during image editing.
-	// Returns ErrEditNotSupported or ErrStreamingNotSupported if not supported.
 	EditImageStreaming(
 		ctx context.Context,
 		prompt string,
@@ -151,8 +144,7 @@ type StreamingImageGenerationClient interface {
 	) error
 }
 
-// EditingImageGenerationClient is an optional interface for clients that support image editing.
-// Providers that support editing implement this alongside ImageGenerationClient.
+// EditingImageGenerationClient is an optional interface for clients that support editing.
 type EditingImageGenerationClient interface {
 	edit(
 		ctx context.Context,
@@ -161,8 +153,7 @@ type EditingImageGenerationClient interface {
 	) (*ImageGenerationResponse, error)
 }
 
-// StreamingEditingImageGenerationClient is an optional interface for clients
-// that support streaming during image editing.
+// StreamingEditingImageGenerationClient is optional for clients that support streaming edits.
 type StreamingEditingImageGenerationClient interface {
 	editStreaming(
 		ctx context.Context,
@@ -204,16 +195,19 @@ func NewImageGeneration(
 			client:  newOpenAIClient(clientOptions),
 		}, nil
 	case model.ProviderGemini:
+		if isNativeModel(clientOptions.model) {
+			return &baseImageGeneration[GeminiNativeClient]{
+				options: clientOptions,
+				client:  newGeminiNativeClient(clientOptions),
+			}, nil
+		}
 		return &baseImageGeneration[GeminiClient]{
 			options: clientOptions,
 			client:  newGeminiClient(clientOptions),
 		}, nil
 	}
 
-	return nil, fmt.Errorf(
-		"image generation provider not supported: %s",
-		provider,
-	)
+	return nil, errors.New("image generation provider not supported: " + string(provider))
 }
 
 func (i *baseImageGeneration[C]) GenerateImage(
@@ -396,6 +390,13 @@ func (i *baseImageGeneration[C]) Model() model.ImageGenerationModel {
 	return i.options.model
 }
 
-// WithAPIKey, WithModel, WithTimeout, WithOpenAIOptions, WithGeminiOptions,
-// and WithHTTPClient are defined in options.go.
+func isNativeModel(m model.ImageGenerationModel) bool {
+	switch m.ID {
+	case model.Gemini25FlashImage, model.Gemini3ProImage:
+		return true
+	default:
+		return false
+	}
+}
+
 
