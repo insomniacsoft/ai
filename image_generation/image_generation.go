@@ -105,10 +105,7 @@ type ImageGeneration interface {
 		options ...GenerationOption,
 	) error
 
-	// SupportsEditing returns true if this provider supports image editing.
-	SupportsEditing() bool
-
-	// Model returns the image generation model configuration being used.
+		SupportsEditing() bool
 	Model() model.ImageGenerationModel
 }
 
@@ -204,6 +201,11 @@ func NewImageGeneration(
 		return &baseImageGeneration[GeminiClient]{
 			options: clientOptions,
 			client:  newGeminiClient(clientOptions),
+		}, nil
+	case model.ProviderOpenRouter:
+		return &baseImageGeneration[OpenRouterClient]{
+			options: clientOptions,
+			client:  newOpenRouterClient(clientOptions),
 		}, nil
 	}
 
