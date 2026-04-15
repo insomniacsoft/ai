@@ -1,12 +1,12 @@
 package image_generation
 
 import (
+	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
-	"net/http"
 
+	"github.com/joakimcarlsson/ai/model"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
@@ -213,6 +213,7 @@ func (o OpenAIClient) generateStreaming(
 	}
 
 	stream := o.client.Images.GenerateStreaming(ctx, params)
+	defer stream.Close()
 
 	for stream.Next() {
 		event := stream.Current()
@@ -248,36 +249,149 @@ func (o OpenAIClient) generateStreaming(
 	return nil
 }
 
-// DownloadImage downloads an image from a URL and returns its binary data.
-// This is a helper function for processing image generation responses that return URLs.
-func DownloadImage(url string) ([]byte, error) {
-	resp, err := http.Get(url)
+func (o OpenAIClient) edit(
+	ctx context.Context,
+	prompt string,
+	options ...GenerationOption,
+) (*ImageGenerationResponse, error) {
+	opts := applyGenerationOptions(o.options.model, "url", options...)
+
+	if len(opts.InputImage) == 0 {
+		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data)")
+	}
+
+	params := openai.ImageEditParams{
+		Prompt: prompt,
+		Model:  openai.ImageModel(o.options.model.APIModel),
+		Image: openai.ImageEditParamsImageUnion{
+			OfFile: io.NopCloser(
+				bytes.NewReader(opts.InputImage),
+			),
+		},
+	}
+
+	if opts.Size != "" && len(o.options.model.SupportedSizes) > 0 {
+		params.Size = openai.ImageEditParamsSize(opts.Size)
+	}
+	if opts.Mask != nil {
+		params.Mask = bytes.NewReader(opts.Mask)
+	}
+	if opts.InputFidelity != "" {
+		params.InputFidelity = openai.ImageEditParamsInputFidelity(opts.InputFidelity)
+	}
+	if opts.Background != "" {
+		params.Background = openai.ImageEditParamsBackground(opts.Background)
+	}
+	if opts.Quality != "" && opts.Quality != "default" {
+		params.Quality = openai.ImageEditParamsQuality(opts.Quality)
+	}
+
+	if o.options.timeout != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *o.options.timeout)
+		defer cancel()
+	}
+
+	response, err := o.client.Images.Edit(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("failed to download image: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"failed to download image: status code %d",
-			resp.StatusCode,
-		)
+		return nil, fmt.Errorf("failed to edit image: %w", err)
 	}
 
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read image data: %w", err)
-	}
-
-	return data, nil
+	return mapOpenAIEditResponse(response, o.options.model), nil
 }
 
-// DecodeBase64Image decodes a base64-encoded image string into binary data.
-// This is a helper function for processing image generation responses with base64 format.
-func DecodeBase64Image(b64 string) ([]byte, error) {
-	data, err := base64.StdEncoding.DecodeString(b64)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode base64 image: %w", err)
+func (o OpenAIClient) editStreaming(
+	ctx context.Context,
+	prompt string,
+	callback StreamCallback,
+	options ...GenerationOption,
+) error {
+	opts := applyGenerationOptions(o.options.model, "url", options...)
+
+	if len(opts.InputImage) == 0 {
+		return fmt.Errorf("input image required for editing: use WithInputImage(data)")
 	}
-	return data, nil
+
+	params := openai.ImageEditParams{
+		Prompt: prompt,
+		Model:  openai.ImageModel(o.options.model.APIModel),
+		Image: openai.ImageEditParamsImageUnion{
+			OfFile: io.NopCloser(
+				bytes.NewReader(opts.InputImage),
+			),
+		},
+		PartialImages: openai.Int(
+			int64(o.openaiOpts.streamingOptions.PartialImages),
+		),
+	}
+
+	if opts.Size != "" && len(o.options.model.SupportedSizes) > 0 {
+		params.Size = openai.ImageEditParamsSize(opts.Size)
+	}
+	if opts.Mask != nil {
+		params.Mask = bytes.NewReader(opts.Mask)
+	}
+	if opts.InputFidelity != "" {
+		params.InputFidelity = openai.ImageEditParamsInputFidelity(opts.InputFidelity)
+	}
+	if opts.Background != "" {
+		params.Background = openai.ImageEditParamsBackground(opts.Background)
+	}
+	if opts.Quality != "" && opts.Quality != "default" {
+		params.Quality = openai.ImageEditParamsQuality(opts.Quality)
+	}
+
+	if o.options.timeout != nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *o.options.timeout)
+		defer cancel()
+	}
+
+	stream := o.client.Images.EditStreaming(ctx, params)
+	defer stream.Close()
+
+	for stream.Next() {
+		event := stream.Current()
+		switch event.Type {
+		case "image_generation.partial_image":
+			if err := callback(ImageStreamEvent{
+				Type:              EventPartialImage,
+				ImageBase64:       event.B64JSON,
+				PartialImageIndex: int(event.PartialImageIndex),
+			}); err != nil {
+				return fmt.Errorf("callback error on partial image: %w", err)
+			}
+		case "image_generation.completed":
+			if err := callback(ImageStreamEvent{
+				Type:        EventCompleted,
+				ImageBase64: event.B64JSON,
+			}); err != nil {
+				return fmt.Errorf("callback error on completed image: %w", err)
+			}
+		}
+	}
+
+	return stream.Err()
 }
+
+func mapOpenAIEditResponse(resp *openai.ImagesResponse, m model.ImageGenerationModel) *ImageGenerationResponse {
+	results := make([]ImageGenerationResult, 0, len(resp.Data))
+	for _, img := range resp.Data {
+		result := ImageGenerationResult{
+			RevisedPrompt: img.RevisedPrompt,
+		}
+		if img.URL != "" {
+			result.ImageURL = img.URL
+		}
+		if img.B64JSON != "" {
+			result.ImageBase64 = img.B64JSON
+		}
+		results = append(results, result)
+	}
+	return &ImageGenerationResponse{
+		Images: results,
+		Model:  m.APIModel,
+	}
+}
+
+// DownloadImage and DecodeBase64Image are in helpers.go.
