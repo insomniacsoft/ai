@@ -13,8 +13,9 @@ const (
 	Gemini20Flash     ID = "gemini-2.0-flash"
 	Gemini20FlashLite ID = "gemini-2.0-flash-lite"
 
-	Gemini25FlashImage ID = "gemini-2.5-flash-image"
-	Gemini3ProImage    ID = "gemini-3-pro-image"
+	Gemini25FlashImage  ID = "gemini-2.5-flash-image"
+	Gemini3ProImage     ID = "gemini-3-pro-image"
+	Gemini31FlashImage  ID = "gemini-3.1-flash-image"
 	Imagen3            ID = "imagen-3.0"
 	Imagen4            ID = "imagen-4.0"
 	Imagen4Ultra       ID = "imagen-4.0-ultra"
@@ -192,6 +193,34 @@ var GeminiImageGenerationModels = map[ID]ImageGenerationModel{
 			},
 			"16:9": {
 				"default": 0.134,
+			},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "3:4", "4:3", "9:16", "16:9"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"default"},
+		DefaultQuality:     "default",
+	},
+	Gemini31FlashImage: {
+		ID:       Gemini31FlashImage,
+		Name:     "Gemini 3.1 Flash Image",
+		Provider: ProviderGemini,
+		APIModel: "gemini-3.1-flash-image-preview",
+		Pricing: map[string]map[string]float64{
+			"1:1": {
+				"default": 0.039,
+			},
+			"3:4": {
+				"default": 0.039,
+			},
+			"4:3": {
+				"default": 0.039,
+			},
+			"9:16": {
+				"default": 0.039,
+			},
+			"16:9": {
+				"default": 0.039,
 			},
 		},
 		MaxPromptTokens:    4000,

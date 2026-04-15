@@ -394,7 +394,7 @@ func (i *baseImageGeneration[C]) Model() model.ImageGenerationModel {
 
 func isNativeModel(m model.ImageGenerationModel) bool {
 	switch m.ID {
-	case model.Gemini25FlashImage, model.Gemini3ProImage:
+	case model.Gemini25FlashImage, model.Gemini3ProImage, model.Gemini31FlashImage:
 		return true
 	default:
 		return false
