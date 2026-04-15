@@ -142,30 +142,7 @@ func (o OpenAIClient) generate(
 		return nil, fmt.Errorf("failed to generate image: %w", err)
 	}
 
-	results := make([]ImageGenerationResult, 0, len(response.Data))
-	for _, img := range response.Data {
-		result := ImageGenerationResult{
-			RevisedPrompt: img.RevisedPrompt,
-		}
-
-		if img.URL != "" {
-			result.ImageURL = img.URL
-		}
-
-		if img.B64JSON != "" {
-			result.ImageBase64 = img.B64JSON
-		}
-
-		results = append(results, result)
-	}
-
-	return &ImageGenerationResponse{
-		Images: results,
-		Usage: ImageGenerationUsage{
-			PromptTokens: 0,
-		},
-		Model: o.options.model.APIModel,
-	}, nil
+	return mapOpenAIResponse(response, o.options.model), nil
 }
 
 func (o OpenAIClient) generateStreaming(
@@ -297,7 +274,7 @@ func (o OpenAIClient) edit(
 		return nil, fmt.Errorf("failed to edit image: %w", err)
 	}
 
-	return mapOpenAIEditResponse(response, o.options.model), nil
+	return mapOpenAIResponse(response, o.options.model), nil
 }
 
 func (o OpenAIClient) editStreaming(
@@ -374,7 +351,7 @@ func (o OpenAIClient) editStreaming(
 	return stream.Err()
 }
 
-func mapOpenAIEditResponse(resp *openai.ImagesResponse, m model.ImageGenerationModel) *ImageGenerationResponse {
+func mapOpenAIResponse(resp *openai.ImagesResponse, m model.ImageGenerationModel) *ImageGenerationResponse {
 	results := make([]ImageGenerationResult, 0, len(resp.Data))
 	for _, img := range resp.Data {
 		result := ImageGenerationResult{
