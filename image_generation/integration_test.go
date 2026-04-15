@@ -67,17 +67,15 @@ func TestOpenAI_GenerateImage(t *testing.T) {
 
 // --- OpenAI Edit ---
 
-func TestOpenAI_EditImage_GPTImage1_SDKLimitation(t *testing.T) {
-	// KNOWN LIMITATION: The openai-go SDK v1.12.0 sends edit requests as
-	// multipart/form-data (because Image field has format:"binary"). The
-	// /v1/images/edits endpoint requires JSON body for gpt-image-1 and
-	// multipart for dall-e-2. Since the SDK only sends multipart, gpt-image-1
-	// editing via Images.Edit() returns "must be dall-e-2".
+func TestOpenAI_EditImage_GPTImage1_NotDirectAPI(t *testing.T) {
+	// GPT-Image-1 editing does NOT go through /v1/images/edits.
+	// It goes through the Responses API (/v1/responses) where a text model
+	// (gpt-4o, gpt-5.4-mini) uses the built-in image_generation tool with
+	// input images from the conversation. That path is handled by the agent
+	// pipeline (providers/openai_responses.go), not this image_generation package.
 	//
-	// GPT-Image-1 editing requires either:
-	// 1. Raw HTTP with JSON body (like the OpenRouter provider does)
-	// 2. The Responses API with image_generation tool
-	// 3. A future SDK update that supports JSON-mode edit
+	// The /v1/images/edits endpoint only supports direct editing for DALL-E 2
+	// (multipart form-data). The openai-go SDK always sends multipart.
 	apiKey := skipIfNoKey(t, "OPENAI_API_KEY")
 
 	client, err := ig.NewImageGeneration(model.ProviderOpenAI,
@@ -91,11 +89,11 @@ func TestOpenAI_EditImage_GPTImage1_SDKLimitation(t *testing.T) {
 	_, err = client.EditImage(context.Background(), "Make the background blue",
 		ig.WithInputImage(testImage()),
 	)
-	// Expect error due to SDK limitation — multipart mode forces dall-e-2
+	// Expect error — GPT-Image-1 editing requires Responses API, not Images API
 	if err == nil {
-		t.Fatal("expected error (SDK sends multipart which requires dall-e-2)")
+		t.Fatal("expected error (GPT-Image-1 edit requires Responses API, not Images.Edit)")
 	}
-	t.Logf("GPT-Image-1 edit fails as expected (SDK limitation): %v", err)
+	t.Logf("GPT-Image-1 direct edit correctly fails: %v", err)
 }
 
 // --- OpenAI Edit without input image ---
