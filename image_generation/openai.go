@@ -259,9 +259,8 @@ func (o OpenAIClient) edit(
 	if opts.Background != "" {
 		params.Background = openai.ImageEditParamsBackground(opts.Background)
 	}
-	if opts.Quality != "" && opts.Quality != "default" {
-		params.Quality = openai.ImageEditParamsQuality(opts.Quality)
-	}
+	// Note: Quality is NOT supported on the Images.Edit endpoint (API returns 400).
+	// It is only valid for Images.Generate.
 
 	if o.options.timeout != nil {
 		var cancel context.CancelFunc
@@ -313,9 +312,6 @@ func (o OpenAIClient) editStreaming(
 	}
 	if opts.Background != "" {
 		params.Background = openai.ImageEditParamsBackground(opts.Background)
-	}
-	if opts.Quality != "" && opts.Quality != "default" {
-		params.Quality = openai.ImageEditParamsQuality(opts.Quality)
 	}
 
 	if o.options.timeout != nil {
