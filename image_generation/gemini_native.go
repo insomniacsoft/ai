@@ -47,6 +47,8 @@ func (g GeminiNativeClient) generate(
 	prompt string,
 	options ...GenerationOption,
 ) (*ImageGenerationResponse, error) {
+	_ = applyGenerationOptions(g.options.model, "b64_json", options...)
+
 	config := &genai.GenerateContentConfig{
 		ResponseModalities: []string{"IMAGE", "TEXT"},
 	}
@@ -91,6 +93,9 @@ func (g GeminiNativeClient) edit(
 	}
 
 	mimeType := detectImageMIME(opts.InputImage)
+	if !isAllowedImageMIME(mimeType) {
+		return nil, fmt.Errorf("unsupported image type: %s", mimeType)
+	}
 	parts := []*genai.Part{
 		{InlineData: &genai.Blob{
 			MIMEType: mimeType,
