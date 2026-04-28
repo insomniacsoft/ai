@@ -44,10 +44,10 @@ func (o OpenRouterClient) generate(
 	body := map[string]any{
 		"model":      o.options.model.APIModel,
 		"messages":   []map[string]any{{"role": "user", "content": prompt}},
-		"modalities": []string{"image", "text"},
+		"modalities": resolveModalities(opts.Modalities),
 		"image_config": map[string]any{
 			"aspect_ratio": mapToAspectRatio(opts.Size),
-			"image_size":   mapToImageSize(opts.Quality),
+			"image_size":   resolveImageSize(opts.ImageSize, opts.Quality),
 		},
 	}
 
@@ -81,7 +81,13 @@ func (o OpenRouterClient) edit(
 	body := map[string]any{
 		"model":      o.options.model.APIModel,
 		"messages":   []map[string]any{{"role": "user", "content": content}},
-		"modalities": []string{"image", "text"},
+		"modalities": resolveModalities(opts.Modalities),
+	}
+	if opts.ImageSize != "" || opts.Size != "" {
+		body["image_config"] = map[string]any{
+			"aspect_ratio": mapToAspectRatio(opts.Size),
+			"image_size":   resolveImageSize(opts.ImageSize, opts.Quality),
+		}
 	}
 
 	return o.doImageRequest(ctx, body)
@@ -211,6 +217,31 @@ func mapToImageSize(quality string) string {
 	default:
 		return "1K"
 	}
+}
+
+// resolveModalities returns the output modalities to send in the OpenRouter
+// request body. When the caller supplied modalities via WithModalities, they
+// take precedence — this is required for image-only models that must NOT send
+// "text" as an output modality. When the caller is silent, the historical
+// default ["image", "text"] is used to preserve backward compatibility for
+// text+image models that already work today.
+func resolveModalities(callerModalities []string) []string {
+	if len(callerModalities) > 0 {
+		return callerModalities
+	}
+	return []string{"image", "text"}
+}
+
+// resolveImageSize returns the OpenRouter image_config.image_size value.
+// When the caller supplied an explicit ImageSize via WithImageSize, it takes
+// precedence (this is what lets callers request "1K"/"2K"/"4K" independently
+// of the Quality knob). When the caller is silent, fall back to deriving the
+// size from Quality via mapToImageSize for backward compatibility.
+func resolveImageSize(callerSize, quality string) string {
+	if callerSize != "" {
+		return callerSize
+	}
+	return mapToImageSize(quality)
 }
 
 func truncate(s string, maxLen int) string {

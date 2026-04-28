@@ -60,6 +60,17 @@ const (
 	OpenRouterSonarDeepResearch ID = "openrouter.sonar-deep-research"
 	OpenRouterGPTOss20b         ID = "openrouter.gpt-oss-20b"
 	OpenRouterGPTOss120b        ID = "openrouter.gpt-oss-120b"
+
+	// OpenRouter image-generation model IDs. Provider API IDs verified against
+	// https://openrouter.ai/api/v1/models?output_modalities=image (2026-04-28).
+	// All are output_modalities: ["image"] (image-only); all accept image_url
+	// content blocks for multi-turn editing.
+	OpenRouterFlux2Max       ID = "openrouter.flux-2-max"
+	OpenRouterFlux2Pro       ID = "openrouter.flux-2-pro"
+	OpenRouterFlux2Klein     ID = "openrouter.flux-2-klein-4b"
+	OpenRouterFlux2Flex      ID = "openrouter.flux-2-flex"
+	OpenRouterRiverflowV2Pro ID = "openrouter.riverflow-v2-pro"
+	OpenRouterRiverflowV2Fast ID = "openrouter.riverflow-v2-fast"
 )
 
 // OpenRouterModels maps OpenRouter model IDs to their configurations.
@@ -820,5 +831,151 @@ var OpenRouterModels = map[ID]Model{
 		DefaultMaxTokens:      131072,
 		CanReason:             true,
 		SupportsStructuredOut: true,
+	},
+}
+
+// OpenRouterImageGenerationModels maps OpenRouter image-generation model IDs
+// to their configurations. Pricing values are per-image USD estimates derived
+// from OpenRouter's image_output token rate × tokens-per-image at each tier
+// (verified against https://openrouter.ai/api/v1/models?output_modalities=image
+// on 2026-04-28). All entries are image-only output (callers must send
+// modalities: ["image"]) and accept image_url content blocks for multi-turn
+// editing.
+//
+// Aspect-ratio "sizes" are used for OpenRouter image_config.aspect_ratio,
+// not pixel dimensions. The pixel resolution is controlled separately via
+// the per-call ImageSize option (1K/2K/4K tier).
+var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
+	OpenRouterFlux2Max: {
+		ID:       OpenRouterFlux2Max,
+		Name:     "OpenRouter – FLUX.2 Max",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-max",
+		Pricing: map[string]map[string]float64{
+			"1:1":  {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"16:9": {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"9:16": {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"4:3":  {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"3:4":  {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"4:5":  {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"5:4":  {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+			"21:9": {"1K": 0.018, "2K": 0.07, "4K": 0.28},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
+	},
+	OpenRouterFlux2Pro: {
+		ID:       OpenRouterFlux2Pro,
+		Name:     "OpenRouter – FLUX.2 Pro",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-pro",
+		Pricing: map[string]map[string]float64{
+			"1:1":  {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"16:9": {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"9:16": {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"4:3":  {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"3:4":  {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"4:5":  {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"5:4":  {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+			"21:9": {"1K": 0.0075, "2K": 0.03, "4K": 0.12},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
+	},
+	// FLUX-2-klein-9b is the Python-era ID; the only OpenRouter slug available
+	// today is flux.2-klein-4b (Klein 9B is open-weight on Hugging Face but not
+	// hosted by OpenRouter as of 2026-04-28). The app-level alias map maps the
+	// 9b name to this 4b entry for backward compatibility.
+	OpenRouterFlux2Klein: {
+		ID:       OpenRouterFlux2Klein,
+		Name:     "OpenRouter – FLUX.2 Klein 4B",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-klein-4b",
+		Pricing: map[string]map[string]float64{
+			"1:1":  {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+			"16:9": {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+			"9:16": {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+			"4:3":  {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+			"3:4":  {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+			"4:5":  {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+			"5:4":  {"1K": 0.0035, "2K": 0.014, "4K": 0.056},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
+	},
+	OpenRouterFlux2Flex: {
+		ID:       OpenRouterFlux2Flex,
+		Name:     "OpenRouter – FLUX.2 Flex",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-flex",
+		Pricing: map[string]map[string]float64{
+			"1:1":  {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"16:9": {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"9:16": {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"4:3":  {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"3:4":  {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"4:5":  {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"5:4":  {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+			"21:9": {"1K": 0.015, "2K": 0.06, "4K": 0.24},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
+	},
+	// Riverflow V2 Pro: per Python registry comment, 1K and 2K cost the same on
+	// OpenRouter so callers should prefer 2K when in doubt; 4K jumps in cost.
+	OpenRouterRiverflowV2Pro: {
+		ID:       OpenRouterRiverflowV2Pro,
+		Name:     "OpenRouter – Riverflow V2 Pro",
+		Provider: ProviderOpenRouter,
+		APIModel: "sourceful/riverflow-v2-pro",
+		Pricing: map[string]map[string]float64{
+			"1:1":  {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"16:9": {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"9:16": {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"4:3":  {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"3:4":  {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"4:5":  {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"5:4":  {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+			"21:9": {"1K": 0.037, "2K": 0.037, "4K": 0.59},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
+	},
+	// Riverflow V2 Fast: optimized for drafts/iteration. No 4K tier (per Python
+	// registry and OpenRouter docs).
+	OpenRouterRiverflowV2Fast: {
+		ID:       OpenRouterRiverflowV2Fast,
+		Name:     "OpenRouter – Riverflow V2 Fast",
+		Provider: ProviderOpenRouter,
+		APIModel: "sourceful/riverflow-v2-fast",
+		Pricing: map[string]map[string]float64{
+			"1:1":  {"1K": 0.0049, "2K": 0.020},
+			"16:9": {"1K": 0.0049, "2K": 0.020},
+			"9:16": {"1K": 0.0049, "2K": 0.020},
+			"4:3":  {"1K": 0.0049, "2K": 0.020},
+			"3:4":  {"1K": 0.0049, "2K": 0.020},
+			"4:5":  {"1K": 0.0049, "2K": 0.020},
+			"5:4":  {"1K": 0.0049, "2K": 0.020},
+		},
+		MaxPromptTokens:    4000,
+		SupportedSizes:     []string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4"},
+		DefaultSize:        "1:1",
+		SupportedQualities: []string{"1K", "2K"},
+		DefaultQuality:     "1K",
 	},
 }

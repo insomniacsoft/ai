@@ -31,6 +31,19 @@ type GenerationOptions struct {
 	// Background controls the background of the generated image.
 	// Values: "transparent", "opaque", "auto" (OpenAI GPT-Image-1 specific).
 	Background string
+
+	// Modalities is the list of output modalities for providers that require it
+	// (currently OpenRouter image generation). Examples: []string{"image"} for
+	// image-only models, []string{"image", "text"} for text+image models.
+	// When empty, the provider falls back to its historical default.
+	Modalities []string
+
+	// ImageSize is a provider-specific output-size tier (currently OpenRouter
+	// image_config.image_size). Examples: "0.5K", "1K", "2K", "4K". This is
+	// independent from Quality (Quality controls rendering effort, ImageSize
+	// controls pixel resolution). When empty, the provider falls back to a
+	// quality-derived default.
+	ImageSize string
 }
 
 // GenerationOption is a function that configures GenerationOptions.
@@ -96,6 +109,27 @@ func WithInputFidelity(fidelity string) GenerationOption {
 func WithBackground(bg string) GenerationOption {
 	return func(options *GenerationOptions) {
 		options.Background = bg
+	}
+}
+
+// WithModalities sets the output modalities for providers that need them
+// (currently OpenRouter image generation). Pass []string{"image"} for
+// image-only models, []string{"image", "text"} for text+image models.
+// When unset, OpenRouter falls back to its historical default of
+// []string{"image", "text"}.
+func WithModalities(modalities ...string) GenerationOption {
+	return func(options *GenerationOptions) {
+		options.Modalities = modalities
+	}
+}
+
+// WithImageSize sets the provider-specific output-size tier (currently
+// OpenRouter image_config.image_size). Examples: "0.5K", "1K", "2K", "4K".
+// This is independent from quality. When unset, OpenRouter derives the
+// size from quality via mapToImageSize.
+func WithImageSize(size string) GenerationOption {
+	return func(options *GenerationOptions) {
+		options.ImageSize = size
 	}
 }
 
