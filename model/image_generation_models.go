@@ -26,4 +26,7 @@ type ImageGenerationModel struct {
 	DefaultQuality string `json:"default_quality,omitempty"`
 	// SupportsStreaming indicates if this model supports streaming partial images during generation.
 	SupportsStreaming bool `json:"supports_streaming,omitempty"`
+	// OutputModalities lists the response modalities the provider should request.
+	// Empty means the provider keeps its historical default.
+	OutputModalities []string `json:"output_modalities,omitempty"`
 }

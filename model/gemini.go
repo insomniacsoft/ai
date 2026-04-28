@@ -13,9 +13,9 @@ const (
 	Gemini20Flash     ID = "gemini-2.0-flash"
 	Gemini20FlashLite ID = "gemini-2.0-flash-lite"
 
-	Gemini25FlashImage  ID = "gemini-2.5-flash-image"
-	Gemini3ProImage     ID = "gemini-3-pro-image"
-	Gemini31FlashImage  ID = "gemini-3.1-flash-image"
+	Gemini25FlashImage ID = "gemini-2.5-flash-image"
+	Gemini3ProImage    ID = "gemini-3-pro-image"
+	Gemini31FlashImage ID = "gemini-3.1-flash-image"
 	Imagen3            ID = "imagen-3.0"
 	Imagen4            ID = "imagen-4.0"
 	Imagen4Ultra       ID = "imagen-4.0-ultra"
@@ -170,8 +170,8 @@ var GeminiImageGenerationModels = map[ID]ImageGenerationModel{
 		MaxPromptTokens:    4000,
 		SupportedSizes:     []string{"1:1", "3:4", "4:3", "9:16", "16:9"},
 		DefaultSize:        "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 	},
 	Gemini3ProImage: {
 		ID:       Gemini3ProImage,
@@ -198,8 +198,8 @@ var GeminiImageGenerationModels = map[ID]ImageGenerationModel{
 		MaxPromptTokens:    4000,
 		SupportedSizes:     []string{"1:1", "3:4", "4:3", "9:16", "16:9"},
 		DefaultSize:        "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 	},
 	Gemini31FlashImage: {
 		ID:       Gemini31FlashImage,
@@ -226,8 +226,8 @@ var GeminiImageGenerationModels = map[ID]ImageGenerationModel{
 		MaxPromptTokens:    4000,
 		SupportedSizes:     []string{"1:1", "3:4", "4:3", "9:16", "16:9"},
 		DefaultSize:        "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 	},
 	Imagen3: {
 		ID:       Imagen3,

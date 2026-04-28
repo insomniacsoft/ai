@@ -44,7 +44,7 @@ func (o OpenRouterClient) generate(
 	body := map[string]any{
 		"model":      o.options.model.APIModel,
 		"messages":   []map[string]any{{"role": "user", "content": prompt}},
-		"modalities": resolveModalities(opts.Modalities),
+		"modalities": resolveModalities(o.options.model.OutputModalities, opts.Modalities),
 		"image_config": map[string]any{
 			"aspect_ratio": mapToAspectRatio(opts.Size),
 			"image_size":   resolveImageSize(opts.ImageSize, opts.Quality),
@@ -81,7 +81,7 @@ func (o OpenRouterClient) edit(
 	body := map[string]any{
 		"model":      o.options.model.APIModel,
 		"messages":   []map[string]any{{"role": "user", "content": content}},
-		"modalities": resolveModalities(opts.Modalities),
+		"modalities": resolveModalities(o.options.model.OutputModalities, opts.Modalities),
 	}
 	if opts.ImageSize != "" || opts.Size != "" {
 		body["image_config"] = map[string]any{
@@ -225,9 +225,12 @@ func mapToImageSize(quality string) string {
 // "text" as an output modality. When the caller is silent, the historical
 // default ["image", "text"] is used to preserve backward compatibility for
 // text+image models that already work today.
-func resolveModalities(callerModalities []string) []string {
+func resolveModalities(modelOutputModalities, callerModalities []string) []string {
 	if len(callerModalities) > 0 {
 		return callerModalities
+	}
+	if len(modelOutputModalities) > 0 {
+		return modelOutputModalities
 	}
 	return []string{"image", "text"}
 }

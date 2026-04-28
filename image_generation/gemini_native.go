@@ -47,10 +47,11 @@ func (g GeminiNativeClient) generate(
 	prompt string,
 	options ...GenerationOption,
 ) (*ImageGenerationResponse, error) {
-	_ = applyGenerationOptions(g.options.model, "b64_json", options...)
+	opts := applyGenerationOptions(g.options.model, "b64_json", options...)
 
 	config := &genai.GenerateContentConfig{
 		ResponseModalities: []string{"IMAGE", "TEXT"},
+		ImageConfig:        geminiImageConfig(opts),
 	}
 
 	if g.options.timeout != nil {
@@ -84,6 +85,7 @@ func (g GeminiNativeClient) edit(
 
 	config := &genai.GenerateContentConfig{
 		ResponseModalities: []string{"IMAGE", "TEXT"},
+		ImageConfig:        geminiImageConfig(opts),
 	}
 
 	if g.options.timeout != nil {
@@ -117,6 +119,20 @@ func (g GeminiNativeClient) edit(
 	}
 
 	return g.mapResponse(resp)
+}
+
+func geminiImageConfig(opts GenerationOptions) *genai.ImageConfig {
+	if opts.Size == "" && opts.ImageSize == "" {
+		return nil
+	}
+	cfg := &genai.ImageConfig{}
+	if opts.Size != "" {
+		cfg.AspectRatio = mapToAspectRatio(opts.Size)
+	}
+	if opts.ImageSize != "" {
+		cfg.ImageSize = opts.ImageSize
+	}
+	return cfg
 }
 
 func (g GeminiNativeClient) mapResponse(

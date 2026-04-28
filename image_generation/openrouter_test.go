@@ -95,10 +95,10 @@ func TestOpenRouter_Generate_ImageOnlyModalities(t *testing.T) {
 	}
 }
 
-// TestOpenRouter_Generate_DefaultModalities asserts the historical default
-// (image+text) is preserved when WithModalities is NOT called, so existing
-// callers (Gemini 3.1 Flash Image, GPT-5 Image via OpenRouter) keep working.
-func TestOpenRouter_Generate_DefaultModalities(t *testing.T) {
+// TestOpenRouter_Generate_DefaultModalitiesFromModel asserts image-only
+// OpenRouter model metadata drives the default request shape. Direct library
+// callers should not need an app-side WithModalities workaround.
+func TestOpenRouter_Generate_DefaultModalitiesFromModel(t *testing.T) {
 	httpClient, captured := captureRequest(t)
 	client := newOpenRouterClient(imageGenerationClientOptions{
 		apiKey:     "test-key",
@@ -115,8 +115,32 @@ func TestOpenRouter_Generate_DefaultModalities(t *testing.T) {
 	if !ok {
 		t.Fatalf("modalities missing")
 	}
+	if len(mods) != 1 || mods[0] != "image" {
+		t.Errorf("expected default modalities=[image], got %v", mods)
+	}
+}
+
+func TestOpenRouter_Generate_DefaultModalitiesFallback(t *testing.T) {
+	httpClient, captured := captureRequest(t)
+	m := fluxFlexModel()
+	m.OutputModalities = nil
+	client := newOpenRouterClient(imageGenerationClientOptions{
+		apiKey:     "test-key",
+		model:      m,
+		httpClient: httpClient,
+	})
+
+	_, err := client.generate(context.Background(), "a cat on a desk")
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	mods, ok := (*captured)["modalities"].([]any)
+	if !ok {
+		t.Fatalf("modalities missing")
+	}
 	if len(mods) != 2 || mods[0] != "image" || mods[1] != "text" {
-		t.Errorf("expected default modalities=[image,text], got %v", mods)
+		t.Errorf("expected legacy fallback modalities=[image,text], got %v", mods)
 	}
 }
 
@@ -328,6 +352,9 @@ func TestOpenRouterImageRegistry_AllModelsHaveAPIModelAndPricing(t *testing.T) {
 		}
 		if len(m.Pricing) == 0 {
 			t.Errorf("%s: empty Pricing — would silently under-bill", id)
+		}
+		if len(m.OutputModalities) != 1 || m.OutputModalities[0] != "image" {
+			t.Errorf("%s: OutputModalities=%v, want [image]", id, m.OutputModalities)
 		}
 	}
 }

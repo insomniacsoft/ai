@@ -65,11 +65,11 @@ const (
 	// https://openrouter.ai/api/v1/models?output_modalities=image (2026-04-28).
 	// All are output_modalities: ["image"] (image-only); all accept image_url
 	// content blocks for multi-turn editing.
-	OpenRouterFlux2Max       ID = "openrouter.flux-2-max"
-	OpenRouterFlux2Pro       ID = "openrouter.flux-2-pro"
-	OpenRouterFlux2Klein     ID = "openrouter.flux-2-klein-4b"
-	OpenRouterFlux2Flex      ID = "openrouter.flux-2-flex"
-	OpenRouterRiverflowV2Pro ID = "openrouter.riverflow-v2-pro"
+	OpenRouterFlux2Max        ID = "openrouter.flux-2-max"
+	OpenRouterFlux2Pro        ID = "openrouter.flux-2-pro"
+	OpenRouterFlux2Klein      ID = "openrouter.flux-2-klein-4b"
+	OpenRouterFlux2Flex       ID = "openrouter.flux-2-flex"
+	OpenRouterRiverflowV2Pro  ID = "openrouter.riverflow-v2-pro"
 	OpenRouterRiverflowV2Fast ID = "openrouter.riverflow-v2-fast"
 )
 
@@ -866,6 +866,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultSize:        "1:1",
 		SupportedQualities: []string{"1K", "2K", "4K"},
 		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Pro: {
 		ID:       OpenRouterFlux2Pro,
@@ -887,6 +888,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultSize:        "1:1",
 		SupportedQualities: []string{"1K", "2K", "4K"},
 		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 	// FLUX-2-klein-9b is the Python-era ID; the only OpenRouter slug available
 	// today is flux.2-klein-4b (Klein 9B is open-weight on Hugging Face but not
@@ -911,6 +913,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultSize:        "1:1",
 		SupportedQualities: []string{"1K", "2K", "4K"},
 		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Flex: {
 		ID:       OpenRouterFlux2Flex,
@@ -932,6 +935,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultSize:        "1:1",
 		SupportedQualities: []string{"1K", "2K", "4K"},
 		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 	// Riverflow V2 Pro: per Python registry comment, 1K and 2K cost the same on
 	// OpenRouter so callers should prefer 2K when in doubt; 4K jumps in cost.
@@ -955,6 +959,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultSize:        "1:1",
 		SupportedQualities: []string{"1K", "2K", "4K"},
 		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 	// Riverflow V2 Fast: optimized for drafts/iteration. No 4K tier (per Python
 	// registry and OpenRouter docs).
@@ -977,5 +982,6 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultSize:        "1:1",
 		SupportedQualities: []string{"1K", "2K"},
 		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 }
