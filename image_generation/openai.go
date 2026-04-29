@@ -380,8 +380,11 @@ func (o OpenAIClient) editStreaming(
 
 	for stream.Next() {
 		event := stream.Current()
+		// /v1/images/edits emits "image_edit.*" event types; the generate
+		// endpoint emits "image_generation.*". Mixing them silently drops
+		// every event, leaving the result empty after the full latency.
 		switch event.Type {
-		case "image_generation.partial_image":
+		case "image_edit.partial_image":
 			if err := callback(ImageStreamEvent{
 				Type:              EventPartialImage,
 				ImageBase64:       event.B64JSON,
@@ -389,7 +392,7 @@ func (o OpenAIClient) editStreaming(
 			}); err != nil {
 				return fmt.Errorf("callback error on partial image: %w", err)
 			}
-		case "image_generation.completed":
+		case "image_edit.completed":
 			if err := callback(ImageStreamEvent{
 				Type:        EventCompleted,
 				ImageBase64: event.B64JSON,
