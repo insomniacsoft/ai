@@ -4,12 +4,61 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
+	"net/http"
 
 	"github.com/joakimcarlsson/ai/model"
 	"github.com/openai/openai-go"
 	"github.com/openai/openai-go/option"
 )
+
+// namedImageReader carries a Filename + ContentType alongside the bytes
+// so the openai-go multipart encoder picks them up via its
+// `interface{ Filename() string }` / `interface{ ContentType() string }`
+// type-assertions (internal/apiform/encoder.go). Without this the SDK
+// falls back to filename="anonymous_file" + Content-Type=
+// "application/octet-stream", which gpt-image-1's images/edits endpoint
+// rejects with a 400 "invalid_request" — the upload bytes never reach
+// the model. http.DetectContentType reads the magic bytes, so the
+// caller doesn't need to track origin format.
+type namedImageReader struct {
+	*bytes.Reader
+	filename    string
+	contentType string
+}
+
+func newNamedImageReader(data []byte) *namedImageReader {
+	mime := http.DetectContentType(data)
+	ext := extForMIME(mime)
+	return &namedImageReader{
+		Reader:      bytes.NewReader(data),
+		filename:    "image" + ext,
+		contentType: mime,
+	}
+}
+
+// Close is a no-op; satisfies io.ReadCloser for callers that close.
+func (r *namedImageReader) Close() error { return nil }
+
+// Filename is read by openai-go's multipart encoder.
+func (r *namedImageReader) Filename() string { return r.filename }
+
+// ContentType is read by openai-go's multipart encoder.
+func (r *namedImageReader) ContentType() string { return r.contentType }
+
+func extForMIME(mime string) string {
+	switch mime {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".bin"
+	}
+}
 
 // OpenAIClient implements image generation using the OpenAI API.
 type OpenAIClient struct {
@@ -237,13 +286,16 @@ func (o OpenAIClient) edit(
 		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data)")
 	}
 
+	imageReader := newNamedImageReader(opts.InputImage)
+	if !isAllowedImageMIME(imageReader.contentType) {
+		return nil, fmt.Errorf("unsupported image type: %s", imageReader.contentType)
+	}
+
 	params := openai.ImageEditParams{
 		Prompt: prompt,
 		Model:  openai.ImageModel(o.options.model.APIModel),
 		Image: openai.ImageEditParamsImageUnion{
-			OfFile: io.NopCloser(
-				bytes.NewReader(opts.InputImage),
-			),
+			OfFile: imageReader,
 		},
 	}
 
@@ -251,7 +303,7 @@ func (o OpenAIClient) edit(
 		params.Size = openai.ImageEditParamsSize(opts.Size)
 	}
 	if opts.Mask != nil {
-		params.Mask = bytes.NewReader(opts.Mask)
+		params.Mask = newNamedImageReader(opts.Mask)
 	}
 	if opts.InputFidelity != "" {
 		params.InputFidelity = openai.ImageEditParamsInputFidelity(opts.InputFidelity)
@@ -288,13 +340,16 @@ func (o OpenAIClient) editStreaming(
 		return fmt.Errorf("input image required for editing: use WithInputImage(data)")
 	}
 
+	imageReader := newNamedImageReader(opts.InputImage)
+	if !isAllowedImageMIME(imageReader.contentType) {
+		return fmt.Errorf("unsupported image type: %s", imageReader.contentType)
+	}
+
 	params := openai.ImageEditParams{
 		Prompt: prompt,
 		Model:  openai.ImageModel(o.options.model.APIModel),
 		Image: openai.ImageEditParamsImageUnion{
-			OfFile: io.NopCloser(
-				bytes.NewReader(opts.InputImage),
-			),
+			OfFile: imageReader,
 		},
 		PartialImages: openai.Int(
 			int64(o.openaiOpts.streamingOptions.PartialImages),
@@ -305,7 +360,7 @@ func (o OpenAIClient) editStreaming(
 		params.Size = openai.ImageEditParamsSize(opts.Size)
 	}
 	if opts.Mask != nil {
-		params.Mask = bytes.NewReader(opts.Mask)
+		params.Mask = newNamedImageReader(opts.Mask)
 	}
 	if opts.InputFidelity != "" {
 		params.InputFidelity = openai.ImageEditParamsInputFidelity(opts.InputFidelity)
