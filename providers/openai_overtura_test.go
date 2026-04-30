@@ -1,8 +1,27 @@
 package llm
 
 import (
+	"encoding/json"
 	"testing"
+
+	"github.com/joakimcarlsson/ai/message"
+	"github.com/joakimcarlsson/ai/model"
 )
+
+// makeMinimalResponsesClient returns a Responses-API-eligible client with
+// just enough state to invoke prepareResponseParams. Mirrors the test
+// helper at openai_responses_test.go but kept here to avoid a cross-file
+// dependency on changes to that file's signature.
+func makeMinimalResponsesClient(opts openaiOptions) *openaiClient {
+	return &openaiClient{
+		providerOptions: llmClientOptions{
+			model: model.Model{APIModel: "gpt-5.4-mini", CanReason: true},
+			maxTokens: 1024,
+		},
+		options:      opts,
+		useResponses: true,
+	}
+}
 
 // TestOpenAIResponsesNewOptionsRoundTrip verifies that the v0.18.5-overtura.5
 // additions land in the openaiOptions struct as expected.
@@ -51,6 +70,114 @@ func TestAnthropicCacheTTLRoundTrip(t *testing.T) {
 	if opts.metadataUserID != "hashed_user_abc" {
 		t.Errorf("metadataUserID = %q, want hashed_user_abc", opts.metadataUserID)
 	}
+}
+
+// TestPrepareResponseParams_StoreFalseWhenNoChain locks the invariant
+// that non-chaining Responses API calls always have Store=false on the
+// wire. This is the security gate for tenant-data privacy: when no
+// PreviousResponseID is set, OpenAI must not retain the response.
+func TestPrepareResponseParams_StoreFalseWhenNoChain(t *testing.T) {
+	client := makeMinimalResponsesClient(openaiOptions{
+		// PreviousResponseID intentionally empty.
+		promptCacheKey:   "cache_xyz",
+		safetyIdentifier: "user_hash",
+	})
+
+	params := client.prepareResponseParams([]message.Message{
+		message.NewUserMessage("Hi"),
+	}, nil)
+
+	raw := mustMarshalAndParse(t, params)
+	if raw["store"] != false {
+		t.Fatalf("store = %v, want false (non-chaining call must not retain tenant data at OpenAI)", raw["store"])
+	}
+	if _, present := raw["previous_response_id"]; present {
+		t.Errorf("previous_response_id should be omitted when not chaining, got %v", raw["previous_response_id"])
+	}
+}
+
+// TestPrepareResponseParams_StoreTrueWhenChainSet verifies the same
+// invariant from the other direction: Store=true is only emitted in the
+// branch that emits PreviousResponseID. This is the contract Overtura's
+// docs/reference/prompt-caching.md cites; if a future refactor flips
+// these independently, that invariant breaks silently.
+func TestPrepareResponseParams_StoreTrueWhenChainSet(t *testing.T) {
+	client := makeMinimalResponsesClient(openaiOptions{
+		previousResponseID: "resp_abc123",
+	})
+
+	params := client.prepareResponseParams([]message.Message{
+		message.NewUserMessage("Hi"),
+	}, nil)
+
+	raw := mustMarshalAndParse(t, params)
+	if raw["store"] != true {
+		t.Errorf("store = %v, want true (chaining call must allow OpenAI to retain the response for next-turn lookup)", raw["store"])
+	}
+	if raw["previous_response_id"] != "resp_abc123" {
+		t.Errorf("previous_response_id = %v, want resp_abc123", raw["previous_response_id"])
+	}
+}
+
+// TestPrepareResponseParams_StoreTracksChainAcrossOptions verifies that
+// the Store flag remains coupled to PreviousResponseID even when other
+// optional knobs are set (cache key, safety identifier, service tier).
+// A future refactor that lifts Store=true out of the chaining branch
+// would silently retain tenant data on every call that happens to set
+// any other Responses API option.
+func TestPrepareResponseParams_StoreTracksChainAcrossOptions(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    openaiOptions
+		wantStore bool
+	}{
+		{
+			name: "all optional knobs without chain — store stays false",
+			opts: openaiOptions{
+				promptCacheKey:   "cache_xyz",
+				safetyIdentifier: "user_hash",
+				serviceTier:      "default",
+				truncation:       "auto",
+			},
+			wantStore: false,
+		},
+		{
+			name: "all optional knobs WITH chain — store flips to true",
+			opts: openaiOptions{
+				previousResponseID: "resp_abc",
+				promptCacheKey:     "cache_xyz",
+				safetyIdentifier:   "user_hash",
+				serviceTier:        "default",
+				truncation:         "auto",
+			},
+			wantStore: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := makeMinimalResponsesClient(tt.opts)
+			params := client.prepareResponseParams([]message.Message{
+				message.NewUserMessage("Hi"),
+			}, nil)
+			raw := mustMarshalAndParse(t, params)
+			if raw["store"] != tt.wantStore {
+				t.Errorf("store = %v, want %v", raw["store"], tt.wantStore)
+			}
+		})
+	}
+}
+
+func mustMarshalAndParse(t *testing.T, v any) map[string]any {
+	t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return raw
 }
 
 // TestAnthropicCacheTTLValueMapping verifies the helper returns the correct SDK constant.
