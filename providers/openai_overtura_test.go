@@ -56,6 +56,11 @@ func TestOpenAIResponsesNewOptionsRoundTrip(t *testing.T) {
 	if opts.promptCacheRetention != "24h" {
 		t.Errorf("promptCacheRetention = %q, want 24h", opts.promptCacheRetention)
 	}
+
+	WithOpenAIChainingEnabled(true)(&opts)
+	if !opts.chainingEnabled {
+		t.Errorf("chainingEnabled = %v, want true", opts.chainingEnabled)
+	}
 }
 
 // TestAnthropicCacheTTLRoundTrip verifies TTL option lands in the struct.
@@ -73,12 +78,13 @@ func TestAnthropicCacheTTLRoundTrip(t *testing.T) {
 }
 
 // TestPrepareResponseParams_StoreFalseWhenNoChain locks the invariant
-// that non-chaining Responses API calls always have Store=false on the
-// wire. This is the security gate for tenant-data privacy: when no
-// PreviousResponseID is set, OpenAI must not retain the response.
+// that calls without ANY chaining trigger (neither chainingEnabled nor
+// previousResponseID) always have Store=false on the wire. Privacy
+// gate: tenant data only persists at OpenAI when the caller explicitly
+// opts in via either trigger.
 func TestPrepareResponseParams_StoreFalseWhenNoChain(t *testing.T) {
 	client := makeMinimalResponsesClient(openaiOptions{
-		// PreviousResponseID intentionally empty.
+		// No chaining trigger set.
 		promptCacheKey:   "cache_xyz",
 		safetyIdentifier: "user_hash",
 	})
@@ -89,10 +95,33 @@ func TestPrepareResponseParams_StoreFalseWhenNoChain(t *testing.T) {
 
 	raw := mustMarshalAndParse(t, params)
 	if raw["store"] != false {
-		t.Fatalf("store = %v, want false (non-chaining call must not retain tenant data at OpenAI)", raw["store"])
+		t.Fatalf("store = %v, want false (no chaining trigger → no tenant data at OpenAI)", raw["store"])
 	}
 	if _, present := raw["previous_response_id"]; present {
 		t.Errorf("previous_response_id should be omitted when not chaining, got %v", raw["previous_response_id"])
+	}
+}
+
+// TestPrepareResponseParams_StoreTrueOnChainingEnabledTurn1 covers the
+// chicken-and-egg case: turn 1 of a chain has no PreviousResponseID
+// but MUST set Store=true so the response_id OpenAI returns can be
+// resolved on turn 2. WithOpenAIChainingEnabled(true) is the trigger.
+func TestPrepareResponseParams_StoreTrueOnChainingEnabledTurn1(t *testing.T) {
+	client := makeMinimalResponsesClient(openaiOptions{
+		chainingEnabled: true,
+		// previousResponseID intentionally empty (turn 1).
+	})
+
+	params := client.prepareResponseParams([]message.Message{
+		message.NewUserMessage("Hi"),
+	}, nil)
+
+	raw := mustMarshalAndParse(t, params)
+	if raw["store"] != true {
+		t.Errorf("store = %v, want true (chainingEnabled=true must Store=true even on turn 1)", raw["store"])
+	}
+	if _, present := raw["previous_response_id"]; present {
+		t.Errorf("previous_response_id should be omitted on turn 1, got %v", raw["previous_response_id"])
 	}
 }
 
@@ -120,15 +149,16 @@ func TestPrepareResponseParams_StoreTrueWhenChainSet(t *testing.T) {
 }
 
 // TestPrepareResponseParams_StoreTracksChainAcrossOptions verifies that
-// the Store flag remains coupled to PreviousResponseID even when other
-// optional knobs are set (cache key, safety identifier, service tier).
-// A future refactor that lifts Store=true out of the chaining branch
-// would silently retain tenant data on every call that happens to set
-// any other Responses API option.
+// Store=true requires an explicit chaining trigger (chainingEnabled OR
+// previousResponseID) — every other Responses API knob (cache key,
+// safety identifier, service tier, truncation) must NOT independently
+// flip Store. A future refactor that lifts Store=true out of the
+// chaining gate would silently retain tenant data on every call that
+// happens to set any other option.
 func TestPrepareResponseParams_StoreTracksChainAcrossOptions(t *testing.T) {
 	tests := []struct {
-		name    string
-		opts    openaiOptions
+		name      string
+		opts      openaiOptions
 		wantStore bool
 	}{
 		{
@@ -142,13 +172,32 @@ func TestPrepareResponseParams_StoreTracksChainAcrossOptions(t *testing.T) {
 			wantStore: false,
 		},
 		{
-			name: "all optional knobs WITH chain — store flips to true",
+			name: "all optional knobs WITH chainingEnabled — store flips to true",
+			opts: openaiOptions{
+				chainingEnabled:  true,
+				promptCacheKey:   "cache_xyz",
+				safetyIdentifier: "user_hash",
+				serviceTier:      "default",
+				truncation:       "auto",
+			},
+			wantStore: true,
+		},
+		{
+			name: "all optional knobs WITH previousResponseID — store flips to true",
 			opts: openaiOptions{
 				previousResponseID: "resp_abc",
 				promptCacheKey:     "cache_xyz",
 				safetyIdentifier:   "user_hash",
 				serviceTier:        "default",
 				truncation:         "auto",
+			},
+			wantStore: true,
+		},
+		{
+			name: "chainingEnabled + previousResponseID — store true, both wire-emitted",
+			opts: openaiOptions{
+				chainingEnabled:    true,
+				previousResponseID: "resp_abc",
 			},
 			wantStore: true,
 		},

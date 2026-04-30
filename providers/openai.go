@@ -63,6 +63,19 @@ type openaiOptions struct {
 	// change. Calling WithOpenAIPromptCacheRetention today is a no-op on
 	// the wire.
 	promptCacheRetention string
+	// chainingEnabled flips Store=true on every Responses API call so the
+	// returned response_id remains resolvable for next-turn chaining.
+	// Required because OpenAI's chain is chicken-and-egg: turn 1 must
+	// Store=true even though it has no PreviousResponseID, otherwise
+	// turn 2's PreviousResponseID lookup returns 400 not_found. Mirrors
+	// PydanticAI's openai_previous_response_id="auto" semantic — the
+	// caller opts into the entire chain, not per-turn.
+	//
+	// When this is true, Store=true is set unconditionally; when false
+	// (default), Store=true is set ONLY in the same branch that emits
+	// PreviousResponseID. Either path is an explicit opt-in — Store
+	// never flips on by accident.
+	chainingEnabled bool
 }
 
 // OpenAIOption configures optional settings for OpenAI clients.
@@ -626,6 +639,29 @@ func WithOpenAITruncation(mode string) OpenAIOption {
 func WithOpenAIPromptCacheRetention(retention string) OpenAIOption {
 	return func(options *openaiOptions) {
 		options.promptCacheRetention = retention
+	}
+}
+
+// WithOpenAIChainingEnabled flips Store=true on every Responses API call
+// so the returned response_id stays resolvable for the next turn's
+// PreviousResponseID lookup.
+//
+// Why this is separate from WithOpenAIPreviousResponseID: OpenAI's
+// chain is chicken-and-egg. Turn 1 has no PreviousResponseID to send,
+// but it MUST set Store=true so turn 2's PreviousResponseID lookup
+// resolves. Without this option, turn 2 would receive HTTP 400
+// previous_response_not_found because turn 1's response was never
+// stored.
+//
+// Mirrors PydanticAI's openai_previous_response_id="auto" semantic:
+// the caller opts into the entire chain, not per-turn. Setting this
+// without setting PreviousResponseID is correct on turn 1 of a chain;
+// setting both is correct for every subsequent turn. Setting NEITHER
+// is the privacy-preserving default — Store stays false, no tenant
+// data retained at OpenAI.
+func WithOpenAIChainingEnabled(enabled bool) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.chainingEnabled = enabled
 	}
 }
 

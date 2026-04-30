@@ -241,15 +241,21 @@ func (o *openaiClient) prepareResponseParams(
 		}
 	}
 
-	// Response chaining + storage policy. Store stays false unless the caller
-	// has explicitly opted into chaining via WithOpenAIPreviousResponseID. The
-	// reset on entry above (newResponseParams) already sets Store: false; we
-	// intentionally do not depend on caller-side cleanup. Store: true is set
-	// ONLY in the same branch that emits PreviousResponseID — that's the
-	// security-H1 invariant the fork's tests verify.
+	// Response chaining + storage policy. Store stays false unless the
+	// caller has explicitly opted into chaining via either:
+	//   - WithOpenAIChainingEnabled(true) — the chain-entry trigger;
+	//     turn 1 of a chain must Store=true even though it has no
+	//     PreviousResponseID to emit.
+	//   - WithOpenAIPreviousResponseID(id) — turn 2+ of a chain;
+	//     emits the prior id so OpenAI resolves the prefix server-side.
+	// Both paths are explicit opt-ins; Store never flips on by accident.
+	// Tests at openai_overtura_test.go::TestPrepareResponseParams_Store*
+	// lock the invariant.
+	if o.options.chainingEnabled || o.options.previousResponseID != "" {
+		params.Store = param.NewOpt(true)
+	}
 	if o.options.previousResponseID != "" {
 		params.PreviousResponseID = param.NewOpt(o.options.previousResponseID)
-		params.Store = param.NewOpt(true)
 	}
 
 	if o.options.promptCacheKey != "" {
