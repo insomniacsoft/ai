@@ -29,10 +29,27 @@ const (
 	AnthropicReasoningEffortMax    AnthropicReasoningEffort = "max"
 )
 
+// AnthropicCacheTTL controls how long Anthropic retains a cache breakpoint.
+// "5m" is the API default; "1h" pays a 2.0× write multiplier but lasts 12×
+// longer. For multi-turn agent sessions, "1h" pays for itself by turn 2.
+type AnthropicCacheTTL string
+
+const (
+	AnthropicCacheTTL5m AnthropicCacheTTL = "5m"
+	AnthropicCacheTTL1h AnthropicCacheTTL = "1h"
+)
+
 type anthropicOptions struct {
 	useBedrock      bool
 	disableCache    bool
 	reasoningEffort *AnthropicReasoningEffort
+	// cacheTTL pins the ephemeral cache TTL on every CacheControl breakpoint
+	// emitted by this client. Empty means the API default (5m).
+	cacheTTL AnthropicCacheTTL
+	// metadataUserID is sent as anthropic.MessageNewParams.Metadata.UserID,
+	// a privacy-preserving abuse-detection signal. Caller MUST hash with a
+	// per-tenant salt before passing it in to prevent cross-tenant linkage.
+	metadataUserID string
 }
 
 // AnthropicOption configures optional settings for Anthropic clients.
@@ -91,6 +108,7 @@ func (a *anthropicClient) convertMessages(
 			if cache {
 				content.OfText.CacheControl = anthropic.CacheControlEphemeralParam{
 					Type: "ephemeral",
+					TTL:  a.cacheTTLValue(),
 				}
 			}
 			var contentBlocks []anthropic.ContentBlockParamUnion
@@ -193,6 +211,7 @@ func (a *anthropicClient) convertTools(
 		if i == len(tools)-1 && !a.options.disableCache {
 			toolParam.CacheControl = anthropic.CacheControlEphemeralParam{
 				Type: "ephemeral",
+				TTL:  a.cacheTTLValue(),
 			}
 		}
 
@@ -283,6 +302,12 @@ func (a *anthropicClient) preparedMessages(
 		params.StopSequences = a.llmOptions.stopSequences
 	}
 
+	if a.options.metadataUserID != "" {
+		params.Metadata = anthropic.MetadataParam{
+			UserID: anthropic.String(a.options.metadataUserID),
+		}
+	}
+
 	if len(systemMessages) > 0 {
 		systemBlocks := make([]anthropic.TextBlockParam, len(systemMessages))
 		for i, sysMsg := range systemMessages {
@@ -292,6 +317,7 @@ func (a *anthropicClient) preparedMessages(
 			if i == len(systemMessages)-1 && !a.options.disableCache {
 				block.CacheControl = anthropic.CacheControlEphemeralParam{
 					Type: "ephemeral",
+					TTL:  a.cacheTTLValue(),
 				}
 			}
 			systemBlocks[i] = block
@@ -492,10 +518,25 @@ func (a *anthropicClient) toolCalls(msg anthropic.Message) []message.ToolCall {
 
 func (a *anthropicClient) usage(msg anthropic.Message) TokenUsage {
 	return TokenUsage{
-		InputTokens:         msg.Usage.InputTokens,
-		OutputTokens:        msg.Usage.OutputTokens,
-		CacheCreationTokens: msg.Usage.CacheCreationInputTokens,
-		CacheReadTokens:     msg.Usage.CacheReadInputTokens,
+		InputTokens:           msg.Usage.InputTokens,
+		OutputTokens:          msg.Usage.OutputTokens,
+		CacheCreationTokens:   msg.Usage.CacheCreationInputTokens,
+		CacheReadTokens:       msg.Usage.CacheReadInputTokens,
+		CacheCreation5mTokens: msg.Usage.CacheCreation.Ephemeral5mInputTokens,
+		CacheCreation1hTokens: msg.Usage.CacheCreation.Ephemeral1hInputTokens,
+	}
+}
+
+// cacheTTLValue returns the SDK TTL constant matching the configured TTL option,
+// or empty string when unset (which the SDK treats as the 5m API default).
+func (a *anthropicClient) cacheTTLValue() anthropic.CacheControlEphemeralTTL {
+	switch a.options.cacheTTL {
+	case AnthropicCacheTTL1h:
+		return anthropic.CacheControlEphemeralTTLTTL1h
+	case AnthropicCacheTTL5m:
+		return anthropic.CacheControlEphemeralTTLTTL5m
+	default:
+		return ""
 	}
 }
 
@@ -517,6 +558,26 @@ func WithAnthropicDisableCache() AnthropicOption {
 func WithAnthropicReasoningEffort(effort AnthropicReasoningEffort) AnthropicOption {
 	return func(options *anthropicOptions) {
 		options.reasoningEffort = &effort
+	}
+}
+
+// WithAnthropicCacheTTL pins the ephemeral cache TTL ("5m" or "1h") on every
+// CacheControl breakpoint emitted by this client. Unset uses the API default.
+// Pair with the per-tier write rates exposed via the Anthropic billing API
+// (5m=1.25× / 1h=2.0× of base input cost).
+func WithAnthropicCacheTTL(ttl AnthropicCacheTTL) AnthropicOption {
+	return func(options *anthropicOptions) {
+		options.cacheTTL = ttl
+	}
+}
+
+// WithAnthropicMetadataUserID sets the per-request `metadata.user_id` field.
+// Anthropic uses this for abuse signals only (no PII contract). Callers MUST
+// hash with a per-tenant salt before passing it in to prevent cross-tenant
+// linkage of the same user across multiple Anthropic API customers.
+func WithAnthropicMetadataUserID(uid string) AnthropicOption {
+	return func(options *anthropicOptions) {
+		options.metadataUserID = uid
 	}
 }
 

@@ -159,10 +159,20 @@ type TokenUsage struct {
 	InputTokens int64
 	// OutputTokens is the number of tokens generated in the response.
 	OutputTokens int64
-	// CacheCreationTokens is the number of tokens used to create cache entries.
+	// CacheCreationTokens is the number of tokens used to create cache entries
+	// (sum of 5-minute and 1-hour ephemeral writes for Anthropic).
 	CacheCreationTokens int64
 	// CacheReadTokens is the number of tokens read from cache.
 	CacheReadTokens int64
+	// CacheCreation5mTokens is the Anthropic 5-minute ephemeral cache-write
+	// component of CacheCreationTokens. Zero on providers that don't tier writes.
+	CacheCreation5mTokens int64
+	// CacheCreation1hTokens is the Anthropic 1-hour ephemeral cache-write
+	// component of CacheCreationTokens. Zero on providers that don't tier writes.
+	CacheCreation1hTokens int64
+	// ReasoningTokens is the count of internal reasoning tokens (OpenAI o-series,
+	// Anthropic extended thinking). Zero on non-reasoning models.
+	ReasoningTokens int64
 }
 
 // Add accumulates token counts from another TokenUsage into this one.
@@ -172,6 +182,9 @@ func (u *TokenUsage) Add(other TokenUsage) {
 	u.OutputTokens += other.OutputTokens
 	u.CacheCreationTokens += other.CacheCreationTokens
 	u.CacheReadTokens += other.CacheReadTokens
+	u.CacheCreation5mTokens += other.CacheCreation5mTokens
+	u.CacheCreation1hTokens += other.CacheCreation1hTokens
+	u.ReasoningTokens += other.ReasoningTokens
 }
 
 // Response represents the complete response from an LLM provider.
@@ -188,6 +201,10 @@ type Response struct {
 	StructuredOutput *string
 	// UsedNativeStructuredOutput indicates if the provider's native structured output was used.
 	UsedNativeStructuredOutput bool
+	// ProviderResponseID is the provider-assigned identifier for this response.
+	// Populated for OpenAI Responses API calls; empty for chat completions and
+	// other providers. Required for response chaining (PreviousResponseID).
+	ProviderResponseID string
 }
 
 // Event represents a single event in a streaming LLM response.

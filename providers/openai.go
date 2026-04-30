@@ -36,6 +36,33 @@ type openaiOptions struct {
 	presencePenalty   *float64
 	seed              *int64
 	parallelToolCalls *bool
+
+	// Responses API extras (only effective when useResponses is true).
+	// previousResponseID enables OpenAI server-side response chaining.
+	// When set, prepareResponseParams flips Store=true for that call so the
+	// chain id remains resolvable on the next turn.
+	previousResponseID string
+	// promptCacheKey is forwarded to OpenAI's automatic prompt cache.
+	// Stable across turns of one session, distinct across sessions, opaque.
+	promptCacheKey string
+	// safetyIdentifier is forwarded as `safety_identifier` (replaces legacy
+	// `user`). Caller must hash with a per-tenant salt before passing in.
+	safetyIdentifier string
+	// serviceTier is forwarded as the `service_tier` parameter.
+	// Empty means SDK default. Values: auto/default/flex/scale/priority.
+	serviceTier string
+	// maxToolCalls caps the total number of tool calls in one response.
+	// Zero (or negative) means leave unset.
+	maxToolCalls int64
+	// truncation is forwarded as `truncation` ("auto" | "disabled").
+	// Empty means SDK default.
+	truncation string
+	// promptCacheRetention is recorded for forward-compat. The current SDK
+	// does not expose this field on ResponseNewParams; the fork accepts and
+	// stores the value so a later SDK bump can wire it without an API
+	// change. Calling WithOpenAIPromptCacheRetention today is a no-op on
+	// the wire.
+	promptCacheRetention string
 }
 
 // OpenAIOption configures optional settings for OpenAI clients.
@@ -531,6 +558,74 @@ func WithOpenAISeed(seed int64) OpenAIOption {
 func WithOpenAIParallelToolCalls(enabled bool) OpenAIOption {
 	return func(options *openaiOptions) {
 		options.parallelToolCalls = &enabled
+	}
+}
+
+// WithOpenAIPreviousResponseID enables OpenAI server-side response chaining
+// for Responses API calls. When set, the next call references the prior
+// response id instead of replaying the full message history. The fork flips
+// Store=true on that call so the chain remains resolvable on the next turn;
+// when this option is empty, Store stays false and no tenant data is retained.
+// Caller is responsible for capturing each completed call's response id and
+// threading it into the next call's options.
+func WithOpenAIPreviousResponseID(id string) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.previousResponseID = id
+	}
+}
+
+// WithOpenAIPromptCacheKey forwards a stable identifier OpenAI uses to bucket
+// requests for automatic prompt-cache routing affinity. Same key across turns
+// of one session, distinct across sessions, opaque (hash, not raw IDs).
+func WithOpenAIPromptCacheKey(key string) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.promptCacheKey = key
+	}
+}
+
+// WithOpenAISafetyIdentifier forwards `safety_identifier` (replaces legacy
+// `user`). Caller MUST hash with a per-tenant salt before passing in to
+// prevent cross-tenant linkage of the same end-user across multiple OpenAI
+// customers.
+func WithOpenAISafetyIdentifier(id string) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.safetyIdentifier = id
+	}
+}
+
+// WithOpenAIServiceTier forwards the `service_tier` parameter.
+// Values: "auto", "default", "flex", "scale", "priority".
+func WithOpenAIServiceTier(tier string) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.serviceTier = tier
+	}
+}
+
+// WithOpenAIMaxToolCalls caps the number of total tool calls in one response.
+// Zero (or negative) means leave unset.
+func WithOpenAIMaxToolCalls(n int64) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.maxToolCalls = n
+	}
+}
+
+// WithOpenAITruncation forwards the `truncation` strategy.
+// Values: "auto" (drop oldest items if context overflows) or "disabled"
+// (default — fail with 400 instead).
+func WithOpenAITruncation(mode string) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.truncation = mode
+	}
+}
+
+// WithOpenAIPromptCacheRetention records the desired retention policy
+// ("in_memory" | "24h"). The current openai-go SDK does not expose this
+// field on ResponseNewParams; the fork accepts and stores the value so a
+// later SDK bump can wire it without a fork-API change. Calling this
+// today is a no-op on the wire.
+func WithOpenAIPromptCacheRetention(retention string) OpenAIOption {
+	return func(options *openaiOptions) {
+		options.promptCacheRetention = retention
 	}
 }
 

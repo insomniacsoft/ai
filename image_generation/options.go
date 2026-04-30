@@ -23,7 +23,13 @@ type GenerationOptions struct {
 	// Callers must provide raw bytes — URL download is the caller's responsibility
 	// (avoids SSRF risk in the library).
 	InputImage []byte
+	// InputImages carries multiple reference images for multi-reference edits.
+	// When non-empty, providers that support it use this instead of InputImage.
+	// Single-image callers should keep using InputImage.
+	InputImages [][]byte
 	// Mask is the mask image bytes (PNG, transparent area = edit region).
+	// When InputImages is used (multi-reference), the mask applies only to the
+	// first image per OpenAI API semantics.
 	Mask []byte
 	// InputFidelity controls how closely the edit follows the source image.
 	// Values: "low" or "high" (OpenAI GPT-Image-1 specific).
@@ -31,6 +37,13 @@ type GenerationOptions struct {
 	// Background controls the background of the generated image.
 	// Values: "transparent", "opaque", "auto" (OpenAI GPT-Image-1 specific).
 	Background string
+	// OutputFormat requests a specific image format from the provider.
+	// Values: "png", "jpeg", "webp". Provider-dependent (gpt-image-2 currently
+	// silently ignores webp; gpt-image-1 honors it).
+	OutputFormat string
+	// OutputCompression is a quality knob 1–100 for lossy formats (jpeg/webp).
+	// 0 means unset. Rejected by the OpenAI API for png.
+	OutputCompression int
 
 	// Modalities is the list of output modalities for providers that require it
 	// (currently OpenRouter image generation). Examples: []string{"image"} for
@@ -85,6 +98,38 @@ func WithN(n int) GenerationOption {
 func WithInputImage(data []byte) GenerationOption {
 	return func(options *GenerationOptions) {
 		options.InputImage = data
+	}
+}
+
+// WithInputImages sets multiple reference images for a multi-reference edit.
+// Providers that support it (OpenAI gpt-image-2, OpenRouter image models) use
+// this instead of InputImage when populated. Empty entries are skipped.
+// OpenAI gpt-image-2 supports up to 16 reference images per call.
+func WithInputImages(images [][]byte) GenerationOption {
+	return func(options *GenerationOptions) {
+		filtered := make([][]byte, 0, len(images))
+		for _, img := range images {
+			if len(img) > 0 {
+				filtered = append(filtered, img)
+			}
+		}
+		options.InputImages = filtered
+	}
+}
+
+// WithOutputFormat requests a specific provider-side output format.
+// Values: "png", "jpeg", "webp". Provider may silently ignore unsupported values.
+func WithOutputFormat(format string) GenerationOption {
+	return func(options *GenerationOptions) {
+		options.OutputFormat = format
+	}
+}
+
+// WithOutputCompression sets quality 1–100 for lossy output formats.
+// Has no effect on png. 0 means unset.
+func WithOutputCompression(quality int) GenerationOption {
+	return func(options *GenerationOptions) {
+		options.OutputCompression = quality
 	}
 }
 

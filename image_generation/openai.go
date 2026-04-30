@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/joakimcarlsson/ai/model"
@@ -282,21 +283,18 @@ func (o OpenAIClient) edit(
 ) (*ImageGenerationResponse, error) {
 	opts := applyGenerationOptions(o.options.model, "url", options...)
 
-	if len(opts.InputImage) == 0 {
-		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data)")
+	if len(opts.InputImage) == 0 && len(opts.InputImages) == 0 {
+		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data) or WithInputImages([][]byte)")
 	}
 
-	imageReader := newNamedImageReader(opts.InputImage)
-	if !isAllowedImageMIME(imageReader.contentType) {
-		return nil, fmt.Errorf("unsupported image type: %s", imageReader.contentType)
+	imageUnion, err := buildImageEditUnion(opts)
+	if err != nil {
+		return nil, err
 	}
-
 	params := openai.ImageEditParams{
 		Prompt: prompt,
 		Model:  openai.ImageModel(o.options.model.APIModel),
-		Image: openai.ImageEditParamsImageUnion{
-			OfFile: imageReader,
-		},
+		Image:  imageUnion,
 	}
 
 	if opts.Size != "" && len(o.options.model.SupportedSizes) > 0 {
@@ -310,6 +308,12 @@ func (o OpenAIClient) edit(
 	}
 	if opts.Background != "" {
 		params.Background = openai.ImageEditParamsBackground(opts.Background)
+	}
+	if opts.OutputFormat != "" {
+		params.OutputFormat = openai.ImageEditParamsOutputFormat(opts.OutputFormat)
+	}
+	if opts.OutputCompression > 0 && opts.OutputFormat != "png" && opts.OutputFormat != "" {
+		params.OutputCompression = openai.Int(int64(opts.OutputCompression))
 	}
 	// Note: Quality is NOT supported on the Images.Edit endpoint (API returns 400).
 	// It is only valid for Images.Generate.
@@ -336,21 +340,18 @@ func (o OpenAIClient) editStreaming(
 ) error {
 	opts := applyGenerationOptions(o.options.model, "url", options...)
 
-	if len(opts.InputImage) == 0 {
-		return fmt.Errorf("input image required for editing: use WithInputImage(data)")
+	if len(opts.InputImage) == 0 && len(opts.InputImages) == 0 {
+		return fmt.Errorf("input image required for editing: use WithInputImage(data) or WithInputImages([][]byte)")
 	}
 
-	imageReader := newNamedImageReader(opts.InputImage)
-	if !isAllowedImageMIME(imageReader.contentType) {
-		return fmt.Errorf("unsupported image type: %s", imageReader.contentType)
+	imageUnion, err := buildImageEditUnion(opts)
+	if err != nil {
+		return err
 	}
-
 	params := openai.ImageEditParams{
 		Prompt: prompt,
 		Model:  openai.ImageModel(o.options.model.APIModel),
-		Image: openai.ImageEditParamsImageUnion{
-			OfFile: imageReader,
-		},
+		Image:  imageUnion,
 		PartialImages: openai.Int(
 			int64(o.openaiOpts.streamingOptions.PartialImages),
 		),
@@ -367,6 +368,12 @@ func (o OpenAIClient) editStreaming(
 	}
 	if opts.Background != "" {
 		params.Background = openai.ImageEditParamsBackground(opts.Background)
+	}
+	if opts.OutputFormat != "" {
+		params.OutputFormat = openai.ImageEditParamsOutputFormat(opts.OutputFormat)
+	}
+	if opts.OutputCompression > 0 && opts.OutputFormat != "png" && opts.OutputFormat != "" {
+		params.OutputCompression = openai.Int(int64(opts.OutputCompression))
 	}
 
 	if o.options.timeout != nil {
@@ -426,3 +433,30 @@ func mapOpenAIResponse(resp *openai.ImagesResponse, m model.ImageGenerationModel
 }
 
 // DownloadImage and DecodeBase64Image are in helpers.go.
+
+// buildImageEditUnion picks the right openai.ImageEditParamsImageUnion variant
+// (single OfFile vs multi-reference OfFileArray) based on whether the caller
+// provided InputImages. Each entry is wrapped in a namedImageReader so the
+// openai-go multipart encoder picks the right Filename/ContentType per file.
+// Pre-flight MIME validation runs on every reference; one bad blob fails the
+// whole call rather than silently uploading garbage.
+func buildImageEditUnion(opts GenerationOptions) (openai.ImageEditParamsImageUnion, error) {
+	if len(opts.InputImages) > 0 {
+		readers := make([]io.Reader, 0, len(opts.InputImages))
+		for i, raw := range opts.InputImages {
+			r := newNamedImageReader(raw)
+			if !isAllowedImageMIME(r.contentType) {
+				return openai.ImageEditParamsImageUnion{},
+					fmt.Errorf("unsupported image type at reference %d: %s", i, r.contentType)
+			}
+			readers = append(readers, r)
+		}
+		return openai.ImageEditParamsImageUnion{OfFileArray: readers}, nil
+	}
+	r := newNamedImageReader(opts.InputImage)
+	if !isAllowedImageMIME(r.contentType) {
+		return openai.ImageEditParamsImageUnion{},
+			fmt.Errorf("unsupported image type: %s", r.contentType)
+	}
+	return openai.ImageEditParamsImageUnion{OfFile: r}, nil
+}

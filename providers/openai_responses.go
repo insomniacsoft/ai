@@ -167,11 +167,13 @@ func responseUsage(resp *responses.Response) TokenUsage {
 		return TokenUsage{}
 	}
 	cachedTokens := resp.Usage.InputTokensDetails.CachedTokens
+	reasoningTokens := resp.Usage.OutputTokensDetails.ReasoningTokens
 	return TokenUsage{
 		InputTokens:         resp.Usage.InputTokens - cachedTokens,
 		OutputTokens:        resp.Usage.OutputTokens,
 		CacheCreationTokens: 0,
 		CacheReadTokens:     cachedTokens,
+		ReasoningTokens:     reasoningTokens,
 	}
 }
 
@@ -239,6 +241,37 @@ func (o *openaiClient) prepareResponseParams(
 		}
 	}
 
+	// Response chaining + storage policy. Store stays false unless the caller
+	// has explicitly opted into chaining via WithOpenAIPreviousResponseID. The
+	// reset on entry above (newResponseParams) already sets Store: false; we
+	// intentionally do not depend on caller-side cleanup. Store: true is set
+	// ONLY in the same branch that emits PreviousResponseID — that's the
+	// security-H1 invariant the fork's tests verify.
+	if o.options.previousResponseID != "" {
+		params.PreviousResponseID = param.NewOpt(o.options.previousResponseID)
+		params.Store = param.NewOpt(true)
+	}
+
+	if o.options.promptCacheKey != "" {
+		params.PromptCacheKey = param.NewOpt(o.options.promptCacheKey)
+	}
+
+	if o.options.safetyIdentifier != "" {
+		params.SafetyIdentifier = param.NewOpt(o.options.safetyIdentifier)
+	}
+
+	if o.options.serviceTier != "" {
+		params.ServiceTier = responses.ResponseNewParamsServiceTier(o.options.serviceTier)
+	}
+
+	if o.options.maxToolCalls > 0 {
+		params.MaxToolCalls = param.NewOpt(o.options.maxToolCalls)
+	}
+
+	if o.options.truncation != "" {
+		params.Truncation = responses.ResponseNewParamsTruncation(o.options.truncation)
+	}
+
 	paramBuilder := newParameterBuilder(o.providerOptions)
 	paramBuilder.applyFloat64Temperature(
 		func(t *float64) { params.Temperature = param.NewOpt(*t) },
@@ -273,10 +306,11 @@ func (o *openaiClient) sendResponses(
 			content, toolCalls := parseResponseOutput(resp)
 
 			return &Response{
-				Content:      content,
-				ToolCalls:    toolCalls,
-				Usage:        responseUsage(resp),
-				FinishReason: responsesFinishReason(resp.Status, toolCalls),
+				Content:            content,
+				ToolCalls:          toolCalls,
+				Usage:              responseUsage(resp),
+				FinishReason:       responsesFinishReason(resp.Status, toolCalls),
+				ProviderResponseID: resp.ID,
 			}, nil
 		},
 	)
@@ -418,16 +452,19 @@ func (o *openaiClient) streamResponses(
 
 			var status responses.ResponseStatus
 			var usage TokenUsage
+			var providerResponseID string
 			if finalResponse != nil {
 				status = finalResponse.Status
 				usage = responseUsage(finalResponse)
+				providerResponseID = finalResponse.ID
 			}
 
 			completeResp := &Response{
-				Content:      currentContent,
-				ToolCalls:    toolCalls,
-				Usage:        usage,
-				FinishReason: responsesFinishReason(status, toolCalls),
+				Content:            currentContent,
+				ToolCalls:          toolCalls,
+				Usage:              usage,
+				FinishReason:       responsesFinishReason(status, toolCalls),
+				ProviderResponseID: providerResponseID,
 			}
 			if isStructured {
 				completeResp.StructuredOutput = &currentContent
@@ -476,6 +513,7 @@ func (o *openaiClient) sendResponsesWithStructuredOutput(
 				FinishReason:               responsesFinishReason(resp.Status, toolCalls),
 				StructuredOutput:           &content,
 				UsedNativeStructuredOutput: true,
+				ProviderResponseID:         resp.ID,
 			}, nil
 		},
 	)

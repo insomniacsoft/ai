@@ -61,21 +61,30 @@ func (o OpenRouterClient) edit(
 ) (*ImageGenerationResponse, error) {
 	opts := applyGenerationOptions(o.options.model, "b64_json", options...)
 
-	if len(opts.InputImage) == 0 {
-		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data)")
+	if len(opts.InputImage) == 0 && len(opts.InputImages) == 0 {
+		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data) or WithInputImages([][]byte)")
 	}
 
-	mimeType := http.DetectContentType(opts.InputImage)
-	if !isAllowedImageMIME(mimeType) {
-		return nil, fmt.Errorf("unsupported image type: %s", mimeType)
+	images := opts.InputImages
+	if len(images) == 0 {
+		images = [][]byte{opts.InputImage}
 	}
 
-	b64 := base64.StdEncoding.EncodeToString(opts.InputImage)
 	content := []map[string]any{
 		{"type": "text", "text": prompt},
-		{"type": "image_url", "image_url": map[string]any{
-			"url": "data:" + mimeType + ";base64," + b64,
-		}},
+	}
+	for i, raw := range images {
+		mimeType := http.DetectContentType(raw)
+		if !isAllowedImageMIME(mimeType) {
+			return nil, fmt.Errorf("unsupported image type at reference %d: %s", i, mimeType)
+		}
+		b64 := base64.StdEncoding.EncodeToString(raw)
+		content = append(content, map[string]any{
+			"type": "image_url",
+			"image_url": map[string]any{
+				"url": "data:" + mimeType + ";base64," + b64,
+			},
+		})
 	}
 
 	body := map[string]any{
