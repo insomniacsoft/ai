@@ -94,7 +94,7 @@ func newAnthropicClient(opts llmClientOptions) AnthropicClient {
 
 func (a *anthropicClient) convertMessages(
 	messages []message.Message,
-) (anthropicMessages []anthropic.MessageParam, systemMessages []string) {
+) (anthropicMessages []anthropic.MessageParam, systemMessages []string, systemCacheBreakpoints []bool) {
 	for i, msg := range messages {
 		cache := false
 		if i == len(messages)-1 && !a.options.disableCache {
@@ -103,6 +103,17 @@ func (a *anthropicClient) convertMessages(
 		switch msg.Role {
 		case message.System:
 			systemMessages = append(systemMessages, msg.Content().String())
+			// Track explicit per-block cache hints so preparedMessages can
+			// emit cache_control on the precise blocks the assembler
+			// chose, instead of only the auto last-block default.
+			breakpoint := false
+			for _, part := range msg.Parts {
+				if tc, ok := part.(message.TextContent); ok && tc.CacheBreakpoint {
+					breakpoint = true
+					break
+				}
+			}
+			systemCacheBreakpoints = append(systemCacheBreakpoints, breakpoint)
 		case message.User:
 			content := anthropic.NewTextBlock(msg.Content().String())
 			if cache {
@@ -240,6 +251,7 @@ func (a *anthropicClient) preparedMessages(
 	messages []anthropic.MessageParam,
 	tools []anthropic.ToolUnionParam,
 	systemMessages []string,
+	systemCacheBreakpoints []bool,
 ) anthropic.MessageNewParams {
 	var thinkingParam anthropic.ThinkingConfigParamUnion
 	var outputConfig anthropic.OutputConfigParam
@@ -309,12 +321,41 @@ func (a *anthropicClient) preparedMessages(
 	}
 
 	if len(systemMessages) > 0 {
+		// Two cache-control modes:
+		//
+		// 1. Implicit (default, backwards-compatible): no caller marked
+		//    a system block with CacheBreakpoint=true → emit one
+		//    breakpoint on the very last system block. Keeps existing
+		//    callers working unchanged.
+		//
+		// 2. Explicit: at least one system block carries
+		//    CacheBreakpoint=true (set via
+		//    message.NewSystemMessageWithCacheBreakpoint) → emit
+		//    breakpoints exactly on those blocks. The auto last-block
+		//    breakpoint is suppressed so the caller controls the full
+		//    cache budget. Anthropic permits up to 4 breakpoints per
+		//    request total (system + tools + messages combined); the
+		//    caller is responsible for staying within the budget.
+		hasExplicitBreakpoints := false
+		for _, bp := range systemCacheBreakpoints {
+			if bp {
+				hasExplicitBreakpoints = true
+				break
+			}
+		}
+
 		systemBlocks := make([]anthropic.TextBlockParam, len(systemMessages))
 		for i, sysMsg := range systemMessages {
 			block := anthropic.TextBlockParam{
 				Text: sysMsg,
 			}
-			if i == len(systemMessages)-1 && !a.options.disableCache {
+			cacheThis := false
+			if hasExplicitBreakpoints {
+				cacheThis = i < len(systemCacheBreakpoints) && systemCacheBreakpoints[i]
+			} else if i == len(systemMessages)-1 {
+				cacheThis = true
+			}
+			if cacheThis && !a.options.disableCache {
 				block.CacheControl = anthropic.CacheControlEphemeralParam{
 					Type: "ephemeral",
 					TTL:  a.cacheTTLValue(),
@@ -333,11 +374,12 @@ func (a *anthropicClient) send(
 	messages []message.Message,
 	tools []tool.BaseTool,
 ) (resposne *Response, err error) {
-	anthropicMessages, systemMessages := a.convertMessages(messages)
+	anthropicMessages, systemMessages, systemCacheBreakpoints := a.convertMessages(messages)
 	preparedMessages := a.preparedMessages(
 		anthropicMessages,
 		a.convertTools(tools),
 		systemMessages,
+		systemCacheBreakpoints,
 	)
 
 	ctx, cancel := withTimeout(ctx, a.llmOptions.timeout)
@@ -379,11 +421,12 @@ func (a *anthropicClient) stream(
 	messages []message.Message,
 	tools []tool.BaseTool,
 ) <-chan Event {
-	anthropicMessages, systemMessages := a.convertMessages(messages)
+	anthropicMessages, systemMessages, systemCacheBreakpoints := a.convertMessages(messages)
 	preparedMessages := a.preparedMessages(
 		anthropicMessages,
 		a.convertTools(tools),
 		systemMessages,
+		systemCacheBreakpoints,
 	)
 	eventChan := make(chan Event)
 
@@ -609,11 +652,12 @@ func (a *anthropicClient) sendWithStructuredOutput(
 	tools []tool.BaseTool,
 	outputSchema *schema.StructuredOutputInfo,
 ) (*Response, error) {
-	anthropicMessages, systemMessages := a.convertMessages(messages)
+	anthropicMessages, systemMessages, systemCacheBreakpoints := a.convertMessages(messages)
 	preparedMessages := a.preparedMessages(
 		anthropicMessages,
 		a.convertTools(tools),
 		systemMessages,
+		systemCacheBreakpoints,
 	)
 	preparedMessages.OutputConfig = a.buildOutputConfig(outputSchema)
 
@@ -659,11 +703,12 @@ func (a *anthropicClient) streamWithStructuredOutput(
 	tools []tool.BaseTool,
 	outputSchema *schema.StructuredOutputInfo,
 ) <-chan Event {
-	anthropicMessages, systemMessages := a.convertMessages(messages)
+	anthropicMessages, systemMessages, systemCacheBreakpoints := a.convertMessages(messages)
 	preparedMessages := a.preparedMessages(
 		anthropicMessages,
 		a.convertTools(tools),
 		systemMessages,
+		systemCacheBreakpoints,
 	)
 	preparedMessages.OutputConfig = a.buildOutputConfig(outputSchema)
 

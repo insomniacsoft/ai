@@ -108,6 +108,15 @@ type ContentPart interface {
 type TextContent struct {
 	// Text contains the actual text content.
 	Text string `json:"text"`
+	// CacheBreakpoint, when true, hints to providers that support
+	// prompt-cache breakpoints (currently Anthropic) that an explicit
+	// cache_control marker should be placed at the end of this content
+	// part. When ANY message in a request marks CacheBreakpoint=true,
+	// the Anthropic provider switches from its default "last system
+	// block only" auto-emission to caller-controlled placement so the
+	// 4-breakpoint Anthropic budget can be carved up across stable
+	// prompt sections. Other providers ignore this field.
+	CacheBreakpoint bool `json:"cache_breakpoint,omitempty"`
 }
 
 // String returns the text content as a string.
@@ -184,6 +193,19 @@ func NewUserMessage(text string) Message {
 // NewSystemMessage creates a new system message with the given text content.
 func NewSystemMessage(text string) Message {
 	return NewMessage(System, []ContentPart{TextContent{Text: text}})
+}
+
+// NewSystemMessageWithCacheBreakpoint creates a system message marked
+// to anchor an explicit prompt-cache breakpoint at its end. Use this
+// when assembling the system prompt as a sequence of stable sections
+// so providers (currently Anthropic) can carve the 4-breakpoint cache
+// budget across stable prefix boundaries (e.g. base+mode-policy →
+// active skill → tools) instead of caching only the very end.
+//
+// Other providers ignore the cache hint and treat the message as a
+// regular system block.
+func NewSystemMessageWithCacheBreakpoint(text string) Message {
+	return NewMessage(System, []ContentPart{TextContent{Text: text, CacheBreakpoint: true}})
 }
 
 // NewAssistantMessage creates a new empty assistant message.
