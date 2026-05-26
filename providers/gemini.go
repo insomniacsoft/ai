@@ -127,6 +127,18 @@ func (g *geminiClient) convertMessages(
 			}
 
 		case message.Tool:
+			// Gemini API rejects Role != ("user"|"model"). Function
+			// responses are sent with role="user" and a FunctionResponse
+			// part — that's how Google's mental model treats the
+			// function output (it comes "from the user side" feeding
+			// back into the model).
+			//
+			// Sending Role="function" produces:
+			//   400 INVALID_ARGUMENT: Role must be user or model, but got function
+			// which kills the chat loop on the first tool turn. Observed
+			// in the Overtura datasource setup-agent's first Gemini
+			// invocation (2026-05-27) and reproduces in any tool-using
+			// chat against this provider.
 			for _, toolResult := range msg.ToolResults() {
 				parts := []*genai.Part{{
 					FunctionResponse: &genai.FunctionResponse{
@@ -138,7 +150,7 @@ func (g *geminiClient) convertMessages(
 				}}
 
 				geminiMessages = append(geminiMessages, &genai.Content{
-					Role:  "function",
+					Role:  "user",
 					Parts: parts,
 				})
 			}
