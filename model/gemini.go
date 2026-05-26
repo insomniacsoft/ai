@@ -7,6 +7,7 @@ const (
 	Gemini3Pro        ID = "gemini-3-pro"
 	Gemini3Flash      ID = "gemini-3-flash"
 	Gemini31Pro       ID = "gemini-3.1-pro"
+	Gemini35Flash     ID = "gemini-3.5-flash"
 	Gemini25Flash     ID = "gemini-2.5-flash"
 	Gemini25FlashLite ID = "gemini-2.5-flash-lite"
 	Gemini25          ID = "gemini-2.5"
@@ -52,6 +53,30 @@ var GeminiModels = map[ID]Model{
 		CostPer1MOut:          3.00,
 		ContextWindow:         1000000,
 		DefaultMaxTokens:      65000,
+		SupportsAttachments:   true,
+		SupportsStructuredOut: true,
+	},
+	// Gemini 3.5 Flash — Google I/O 2026 release (2026-05-19, GA stable).
+	// Optimized for parallel agentic execution loops + coding; outperforms
+	// 3.1 Pro on agentic benchmarks while running 4× faster and ~40%
+	// cheaper. 90% cache discount on input. Reasoning enabled (thinking
+	// budget controlled via Gemini's thinking_config) so the resolver
+	// treats it as a reasoning-capable model — the setup agent's
+	// buildSetupClients gates non-reasoning models out of the OpenAI
+	// reasoning-effort tiering, but Gemini falls through that branch
+	// regardless (Gemini reasoning is configured differently).
+	Gemini35Flash: {
+		ID:                    Gemini35Flash,
+		Name:                  "Gemini 3.5 Flash",
+		Provider:              ProviderGemini,
+		APIModel:              "gemini-3.5-flash",
+		CostPer1MIn:           1.50,
+		CostPer1MInCached:     0.15,
+		CostPer1MOutCached:    0,
+		CostPer1MOut:          9.00,
+		ContextWindow:         1_048_576,
+		DefaultMaxTokens:      65536,
+		CanReason:             true,
 		SupportsAttachments:   true,
 		SupportsStructuredOut: true,
 	},
