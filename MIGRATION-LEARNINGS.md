@@ -38,3 +38,18 @@ Co-located with the fork work; distilled into overtura `docs/solutions/` at ship
 - Test technique: white-box (`package anthropic`) tests construct `&Client{options:…}`
   and assert on `preparedMessages`/`convertTools`/`usage` wire output. A fake
   `tool.BaseTool` must pass a real (empty) params struct to `tool.NewInfo`, not nil.
+
+## U4 — OpenAI Responses + response-ID (llm/openai + llm + agent)
+- The new module splits chat (`NewLLM`) from Responses (`NewResponsesLLM`); the
+  Responses-only options (prompt-cache, chaining, response-id) live on
+  `ResponsesOption`. The old monolith's /v1/responses-vs-chat routing pre-existed
+  at the v0.18.5 base and is now overtura's construction choice (U9), not a patch.
+- Store/chaining invariant + turn-1 chain-trap re-homed verbatim
+  (`chainingEnabled || previousResponseID != ""` → Store; never auto-on).
+- ProviderResponseID threaded llm.Response → agent.ChatResponse (chat.go + stream.go,
+  nil-guarded). task_manager.go's degenerate ChatResponse legitimately omits it.
+- **usage()/accounting is a repeat silent-parity trap** (like U3): review caught
+  that `responsesClient.usage()` dropped `ReasoningTokens` and didn't subtract
+  cached input (double-billing). The chat client already did both. Always diff
+  every provider's `usage()` against the archive. Fixed in U4.
+- PromptCacheRetention was a no-op on the old SDK; now actually wired (v3.37 field).
