@@ -67,3 +67,40 @@ Co-located with the fork work; distilled into overtura `docs/solutions/` at ship
   a shared helper would change behavior / add rebase surface. Field-drop is
   build-guarded; per-site wiring is covered by U13's live Gemini+tools test. Chose
   not to refactor upstream structure for a unit test (fork-maintenance discipline).
+
+## U6 — Image generate+edit (image + image/openai + image/gemini)
+- **Unexported optional-interface methods do NOT survive a module split.** The
+  monolith expressed optional capabilities (edit/streaming) as interfaces with
+  UNEXPORTED methods (`generate`/`edit`/...) that a central `baseImageGeneration[C]`
+  dispatched via type assertion. Go only lets the DECLARING package implement an
+  unexported interface method, so a vendor module can never satisfy it. The
+  multi-module equivalent: declare ALL interface methods EXPORTED (this is exactly
+  why upstream's own prompt-only `Generation` uses exported methods), and return
+  sentinels (`ErrEditNotSupported`/`ErrStreamingNotSupported`) + a `SupportsEditing()`
+  probe for unsupported capabilities. Tracing moves from the factory base into a
+  `WithEditingTracing(inner, attrs)` wrapper (mirrors upstream `WithTracing`).
+- **The central provider factory cannot live in the shared package** — `image`
+  importing `image/openai`+`image/gemini` (which import `image`) is a cycle. The
+  monolith's `NewImageGeneration(provider, ...)` is dropped; provider selection
+  moves to the consumer (U9), matching upstream's per-vendor `NewGeneration`.
+- **Same method name + different signatures ⇒ one type can't satisfy both
+  interfaces.** `Generation.GenerateImage(ctx,prompt)` vs
+  `ImageGeneration.GenerateImage(ctx,prompt,...opt)` collide, so the fork's
+  openai/gemini implement ONLY the optioned `ImageGeneration`; `image/xai` keeps
+  prompt-only `Generation`. No merge possible.
+- **Verify the SDK version against the monolith before assuming a bump.** openai-go
+  stayed at v1.12.0 — the monolith proved the full edit surface (OfFileArray,
+  edit streaming, image_edit.* events) on v1.12.0. llm/openai's v3 bump is a
+  SEPARATE module's concern; image/openai didn't need it.
+- **Unforked `model` constants can be renamed upstream.** `Gemini31FlashImage` →
+  `Gemini31FlashImagePreview` (alias `NanoBanana2`). Grep the model module for the
+  real constant name; don't trust the monolith's name for unforked deps.
+- **go.sum gaps after re-home**: importing the wider edit API pulled new transitive
+  deps (tidwall/sjson/gjson) not in upstream's narrower go.sum. `go mod tidy` per
+  module after re-home (U8 will re-verify all).
+- Review (general-purpose Go reviewer, archive-diff): ZERO undocumented divergences
+  across all 8 paths — the cleanest unit. The exported-interface + sentinel design
+  was the load-bearing decision; once made, the per-method re-home was mechanical.
+- xai needs NO code: consumer builds xAI via `image/openai.NewGeneration(WithBaseURL(
+  "https://api.x.ai/v1"))`, exactly as the monolith routed ProviderXAI through its
+  OpenAIClient. Upstream `image/xai` stays unused.
