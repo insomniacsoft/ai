@@ -101,6 +101,14 @@ type TokenUsage struct {
 	OutputTokens        int64
 	CacheCreationTokens int64
 	CacheReadTokens     int64
+	// CacheCreation5mTokens is the Anthropic 5-minute ephemeral cache-write
+	// component of CacheCreationTokens. Zero on providers that don't tier writes.
+	CacheCreation5mTokens int64
+	// CacheCreation1hTokens is the Anthropic 1-hour ephemeral cache-write
+	// component of CacheCreationTokens. Zero on providers that don't tier writes.
+	// The 1h tier is billed at a higher write rate than 5m, so cost accounting
+	// must keep the split rather than collapsing into CacheCreationTokens.
+	CacheCreation1hTokens int64
 	// ReasoningTokens counts tokens spent on internal reasoning/thinking, as
 	// reported by providers that surface it (OpenAI o-series, Gemini, DeepSeek).
 	// These are billed within OutputTokens, not in addition to them.
@@ -113,6 +121,8 @@ func (u *TokenUsage) Add(other TokenUsage) {
 	u.OutputTokens += other.OutputTokens
 	u.CacheCreationTokens += other.CacheCreationTokens
 	u.CacheReadTokens += other.CacheReadTokens
+	u.CacheCreation5mTokens += other.CacheCreation5mTokens
+	u.CacheCreation1hTokens += other.CacheCreation1hTokens
 	u.ReasoningTokens += other.ReasoningTokens
 }
 
