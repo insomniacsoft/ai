@@ -133,3 +133,53 @@ mapToAspectRatio/mapToImageSize/resolveModalities/resolveImageSize helpers; the
 gemini copy of mapToAspectRatio now lives in image/gemini/helpers.go) + U8 (tag
 all, ensure each module's go.sum is complete — image/openai + image/gemini already
 tidied this unit; xai also tidied).
+
+## U8 — tag + go.work + GOPRIVATE (publish step)
+
+State: `multimodule` branch is LOCAL ONLY (never pushed; 16 commits ahead of
+upstream/main base af8b201). Existing `v0.18.5-overtura.N` tags are the MONOLITH
+scheme the parallel sessions still consume — a different namespace from the
+per-module tags below, so they do NOT collide (parallel sessions stay safe).
+
+Per-module overtura tag scheme (`<module>/<upstream-base>-overtura.1`), 11 modules:
+- model/v0.3.0-overtura.1
+- message/v0.1.0-overtura.1
+- llm/v0.2.0-overtura.1
+- llm/anthropic/v0.2.2-overtura.1
+- llm/openai/v0.3.2-overtura.1
+- llm/gemini/v0.2.2-overtura.1
+- agent/v0.2.1-overtura.1
+- image/v0.1.0-overtura.1
+- image/openai/v0.1.0-overtura.1
+- image/gemini/v0.1.2-overtura.1
+- image/openrouter/v0.1.0-overtura.1  (fork-only, no upstream base)
+
+Publish steps (OUTWARD-FACING — gated on user authorization):
+1. Require-pin rewrite: bump every FORKED sibling require to its -overtura.1
+   version, at CONSISTENT versions (today they're inconsistent: model required at
+   v0.1.0/v0.2.0/v0.3.0 across modules → all must become model/v0.3.0-overtura.1).
+   KEEP the `replace => ../` directives (local dev resolves via replace; external
+   consumers ignore replaces and use the pinned requires). Unforked siblings
+   (tool/types/session/tracing) stay at their upstream versions.
+2. Push `multimodule` branch to origin (github.com/insomniacsoft/ai).
+3. Create + push the 11 per-module tags at the require-rewrite commit.
+4. Verification: (1) local go.work `go list -m` resolves forked→local dirs;
+   (2) GOWORK=off clean-checkout fetches each -overtura.1 tag via
+   GOPRIVATE=github.com/insomniacsoft/* and cross-module requires resolve
+   consistently. **Gate Phase 2 on pass (2).**
+NOTE: pass (1) full overtura build + pass (2) are COUPLED TO U9 — overtura's
+consumer still imports the monolith `github.com/joakimcarlsson/ai v0.18.5` and
+`image_generation`/`llm.NewLLM`; it cannot build against the per-module fork until
+U9 rewrites import sites. The plan acknowledges this ("resolution proven by U12's
+clean build"). So U8's GOWORK=off proof is best run as a minimal synthetic consumer
+OR folded into U9's first build.
+
+## U10 impact (Phase 2) — "no model fork" is SUPERSEDED
+Plan U10 says "no `model` fork (KTD-1)" and to consume upstream `model/v0.3.0`
+unforked. The U7 decision A (fork `model` for OutputModalities + OpenRouter image
+models) VOIDS that premise. When Phase 2 reaches U10: the catalog points at the
+FORKED model (model/v0.3.0-overtura.1); the Anthropic cache-pricing cost-layer work
+in U10 still applies, but the "unforked" framing does not. Also resolve the
+`model.Gemini31FlashImage`→`Gemini31FlashImagePreview` rename (re-add alias to the
+fork, or update the consumer) — the consumer's catalog_descriptors.go uses the old
+name.
