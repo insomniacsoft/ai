@@ -73,6 +73,15 @@ type ResponsesOptions struct {
 	extraHeaders    map[string]string
 	reasoningEffort *ReasoningEffort
 	builtinTools    []responses.ToolUnionParam
+	// Prompt-cache + server-side chaining (overtura). See the With* options below.
+	previousResponseID   string
+	promptCacheKey       string
+	promptCacheRetention string
+	safetyIdentifier     string
+	serviceTier          string
+	truncation           string
+	maxToolCalls         int64
+	chainingEnabled      bool
 }
 
 // ResponsesOption configures [ResponsesOptions].
@@ -122,6 +131,52 @@ func WithResponsesExtraHeaders(h map[string]string) ResponsesOption {
 // reasoning models.
 func WithResponsesReasoningEffort(e ReasoningEffort) ResponsesOption {
 	return func(o *ResponsesOptions) { o.reasoningEffort = &e }
+}
+
+// WithResponsesChainingEnabled opts into server-side response chaining. Turn 1 of
+// a chain sets Store=true even though it has no previous-response id yet (the
+// chain-entry trigger); without this, a turn-1 request that omits a previous id
+// would not be stored and the chain could never start (the turn-1 chain trap).
+func WithResponsesChainingEnabled(enabled bool) ResponsesOption {
+	return func(o *ResponsesOptions) { o.chainingEnabled = enabled }
+}
+
+// WithResponsesPreviousResponseID chains this request onto a prior stored response
+// (turn 2+). Implies Store=true.
+func WithResponsesPreviousResponseID(id string) ResponsesOption {
+	return func(o *ResponsesOptions) { o.previousResponseID = id }
+}
+
+// WithResponsesPromptCacheKey sets prompt_cache_key, routing requests that share a
+// stable prefix to the same cache partition for higher hit rates.
+func WithResponsesPromptCacheKey(key string) ResponsesOption {
+	return func(o *ResponsesOptions) { o.promptCacheKey = key }
+}
+
+// WithResponsesPromptCacheRetention sets prompt_cache_retention (e.g. "24h").
+func WithResponsesPromptCacheRetention(retention string) ResponsesOption {
+	return func(o *ResponsesOptions) { o.promptCacheRetention = retention }
+}
+
+// WithResponsesSafetyIdentifier sets safety_identifier (a salted per-user hash for
+// OpenAI abuse-detection without exposing real identity).
+func WithResponsesSafetyIdentifier(id string) ResponsesOption {
+	return func(o *ResponsesOptions) { o.safetyIdentifier = id }
+}
+
+// WithResponsesServiceTier sets service_tier (e.g. "auto", "flex", "priority").
+func WithResponsesServiceTier(tier string) ResponsesOption {
+	return func(o *ResponsesOptions) { o.serviceTier = tier }
+}
+
+// WithResponsesTruncation sets the truncation strategy (e.g. "auto", "disabled").
+func WithResponsesTruncation(mode string) ResponsesOption {
+	return func(o *ResponsesOptions) { o.truncation = mode }
+}
+
+// WithResponsesMaxToolCalls caps the number of built-in tool invocations per turn.
+func WithResponsesMaxToolCalls(n int64) ResponsesOption {
+	return func(o *ResponsesOptions) { o.maxToolCalls = n }
 }
 
 // WithWebSearch enables the web_search built-in tool. Pass a [WebSearchOpts]
@@ -388,6 +443,35 @@ func (c *responsesClient) preparedParams(
 			params.Reasoning.Effort = shared.ReasoningEffortHigh
 		}
 	}
+
+	// Response chaining + storage policy. Store stays false unless the caller
+	// explicitly opted into chaining — either via WithResponsesChainingEnabled
+	// (turn 1, no previous id yet) or WithResponsesPreviousResponseID (turn 2+).
+	// Store never flips on by accident.
+	if c.options.chainingEnabled || c.options.previousResponseID != "" {
+		params.Store = openaisdk.Bool(true)
+	}
+	if c.options.previousResponseID != "" {
+		params.PreviousResponseID = openaisdk.String(c.options.previousResponseID)
+	}
+	if c.options.promptCacheKey != "" {
+		params.PromptCacheKey = openaisdk.String(c.options.promptCacheKey)
+	}
+	if c.options.promptCacheRetention != "" {
+		params.PromptCacheRetention = responses.ResponseNewParamsPromptCacheRetention(c.options.promptCacheRetention)
+	}
+	if c.options.safetyIdentifier != "" {
+		params.SafetyIdentifier = openaisdk.String(c.options.safetyIdentifier)
+	}
+	if c.options.serviceTier != "" {
+		params.ServiceTier = responses.ResponseNewParamsServiceTier(c.options.serviceTier)
+	}
+	if c.options.truncation != "" {
+		params.Truncation = responses.ResponseNewParamsTruncation(c.options.truncation)
+	}
+	if c.options.maxToolCalls > 0 {
+		params.MaxToolCalls = openaisdk.Int(c.options.maxToolCalls)
+	}
 	return params
 }
 
@@ -505,9 +589,10 @@ func (c *responsesClient) SendMessages(
 			return &llm.Response{
 				Content:          content,
 				ToolCalls:        toolCalls,
-				Usage:            c.usage(resp),
-				FinishReason:     c.finishReason(resp),
-				ProviderMetadata: meta,
+				Usage:              c.usage(resp),
+				FinishReason:       c.finishReason(resp),
+				ProviderMetadata:   meta,
+				ProviderResponseID: resp.ID,
 			}, nil
 		},
 	)
@@ -546,6 +631,7 @@ func (c *responsesClient) SendMessagesWithStructuredOutput(
 				StructuredOutput:           &content,
 				UsedNativeStructuredOutput: true,
 				ProviderMetadata:           meta,
+				ProviderResponseID:         resp.ID,
 			}, nil
 		},
 	)
@@ -694,11 +780,12 @@ func (c *responsesClient) runStream(
 						meta = map[string]any{"openai.url_citations": citations}
 					}
 					finalResp := &llm.Response{
-						Content:          contentStr,
-						ToolCalls:        toolCalls,
-						Usage:            c.usage(&event.Response),
-						FinishReason:     c.finishReason(&event.Response),
-						ProviderMetadata: meta,
+						Content:            contentStr,
+						ToolCalls:          toolCalls,
+						Usage:              c.usage(&event.Response),
+						FinishReason:       c.finishReason(&event.Response),
+						ProviderMetadata:   meta,
+						ProviderResponseID: event.Response.ID,
 					}
 					if structured {
 						finalResp.StructuredOutput = &contentStr
