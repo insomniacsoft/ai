@@ -539,10 +539,17 @@ func (c *responsesClient) usage(resp *responses.Response) llm.TokenUsage {
 	if resp == nil {
 		return llm.TokenUsage{}
 	}
+	// OpenAI reports InputTokens as the total including cached tokens. Subtract
+	// the cached portion so cost accounting prices non-cached input at the full
+	// rate and cached input (CacheReadTokens) at the cheaper rate — without this
+	// the cached tokens are billed at both rates. Mirrors the chat-completions
+	// client's usage().
+	cachedTokens := resp.Usage.InputTokensDetails.CachedTokens
 	return llm.TokenUsage{
-		InputTokens:     resp.Usage.InputTokens,
+		InputTokens:     resp.Usage.InputTokens - cachedTokens,
 		OutputTokens:    resp.Usage.OutputTokens,
-		CacheReadTokens: resp.Usage.InputTokensDetails.CachedTokens,
+		CacheReadTokens: cachedTokens,
+		ReasoningTokens: resp.Usage.OutputTokensDetails.ReasoningTokens,
 	}
 }
 
