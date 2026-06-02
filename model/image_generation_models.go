@@ -30,4 +30,11 @@ type ImageGenerationModel struct {
 	DefaultAspectRatio string `json:"default_aspect_ratio,omitempty"`
 	// SupportsStreaming indicates if this model supports streaming partial images during generation.
 	SupportsStreaming bool `json:"supports_streaming,omitempty"`
+	// OutputModalities lists the response modalities the provider should request
+	// (currently OpenRouter image generation: ["image"] for image-only models,
+	// ["image","text"] for text+image). Empty means the provider keeps its
+	// historical default. [OVERTURA FORK] — upstream's ImageGenerationModel lacks
+	// this field; re-homed so image/openrouter and the consumer can mark image-only
+	// models. See OVERTURA-FORK-NOTES.md (U7 decision A).
+	OutputModalities []string `json:"output_modalities,omitempty"`
 }

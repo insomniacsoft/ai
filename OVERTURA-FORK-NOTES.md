@@ -4,12 +4,12 @@ This is the `insomniacsoft/ai` fork of `joakimcarlsson/ai`, re-established on th
 upstream multi-module layout. Sync upstream by **rebase, not merge**. Tag each
 forked module independently as `<module>/vX.Y.Z-overtura.N`.
 
-## Locked fork set — 10 modules (U2 → 9; U5 added `message`)
+## Locked fork set — 11 modules (U2 → 9; U5 added `message`; U7 added `model`)
 
-`llm`, `agent`, `message`, `llm/anthropic`, `llm/openai`, `llm/gemini`, `image`,
-`image/openai`, `image/gemini`, `image/openrouter` (fork-only).
+`llm`, `agent`, `message`, `model`, `llm/anthropic`, `llm/openai`, `llm/gemini`,
+`image`, `image/openai`, `image/gemini`, `image/openrouter` (fork-only).
 
-`model`, `tool`, `types`, `session` are consumed **unforked** from upstream.
+`tool`, `types`, `session` are consumed **unforked** from upstream.
 
 `message` was added to the fork set at U5 (user decision A, 2026-06-02): upstream's
 new `message` module dropped `ToolCall.ThoughtSignature`, which the Gemini-3
@@ -17,6 +17,19 @@ thought-signature replay (a plan-listed correctness fix overtura relies on for
 Gemini-3 + tools) requires. The earlier U2 "don't fork message" decision was
 specifically about the unused `CacheBreakpoint` path (still dropped); ThoughtSignature
 is a used correctness fix, so `message` is forked for it.
+
+`model` was added to the fork set at U7 (user decision A, 2026-06-02). Upstream's
+`model.ImageGenerationModel` has no `OutputModalities` field and upstream defines
+no OpenRouter image-generation models at all. The fork-only `image/openrouter`
+module needs per-model output modalities (image-only models must request
+`["image"]`, not `["image","text"]`), and overtura's consumer reads
+`e.ImageLibraryModel.OutputModalities` at compile time. Same precedent as `message`
+(U5): fork the module when upstream drops a capability field overtura uses.
+Re-homed: the `OutputModalities []string` field on `ImageGenerationModel` + the 6
+`OpenRouterImageGenerationModels` entries (Flux2 Max/Pro/Klein/Flex, Riverflow V2
+Pro/Fast) + their ID constants. NOTE the consumer (U9) also references
+`model.Gemini31FlashImage` (renamed upstream → `Gemini31FlashImagePreview`); decide
+at U9 whether to re-add the old alias to the forked model or update the consumer.
 
 ## Per-theme re-home decisions
 
