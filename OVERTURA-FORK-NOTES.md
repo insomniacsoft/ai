@@ -4,13 +4,19 @@ This is the `insomniacsoft/ai` fork of `joakimcarlsson/ai`, re-established on th
 upstream multi-module layout. Sync upstream by **rebase, not merge**. Tag each
 forked module independently as `<module>/vX.Y.Z-overtura.N`.
 
-## Locked fork set (U2 decision, 2026-06-02) — 9 modules
+## Locked fork set — 10 modules (U2 → 9; U5 added `message`)
 
-`llm`, `agent`, `llm/anthropic`, `llm/openai`, `llm/gemini`, `image`,
+`llm`, `agent`, `message`, `llm/anthropic`, `llm/openai`, `llm/gemini`, `image`,
 `image/openai`, `image/gemini`, `image/openrouter` (fork-only).
 
-`model`, `message`, `tool`, `types`, `session` are consumed **unforked** from
-upstream.
+`model`, `tool`, `types`, `session` are consumed **unforked** from upstream.
+
+`message` was added to the fork set at U5 (user decision A, 2026-06-02): upstream's
+new `message` module dropped `ToolCall.ThoughtSignature`, which the Gemini-3
+thought-signature replay (a plan-listed correctness fix overtura relies on for
+Gemini-3 + tools) requires. The earlier U2 "don't fork message" decision was
+specifically about the unused `CacheBreakpoint` path (still dropped); ThoughtSignature
+is a used correctness fix, so `message` is forked for it.
 
 ## Per-theme re-home decisions
 
