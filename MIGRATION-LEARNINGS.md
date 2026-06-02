@@ -53,3 +53,17 @@ Co-located with the fork work; distilled into overtura `docs/solutions/` at ship
   cached input (double-billing). The chat client already did both. Always diff
   every provider's `usage()` against the archive. Fixed in U4.
 - PromptCacheRetention was a no-op on the old SDK; now actually wired (v3.37 field).
+
+## U5 — Gemini fixes (llm/gemini + message) — fork set → 10
+- Tool-result role "function"→"user" (documented 400 in overtura's setup-agent).
+- ThoughtSignature: upstream `message.ToolCall` DROPPED the field; re-added it to the
+  forked `message` (user decision A → message is now forked, 10 modules). Gemini
+  captures it from function-call response parts (3 sites; the archive's 4 sites
+  consolidate 4→3 because upstream merged the two streaming paths into streamInternal)
+  and replays it on the outgoing genai.Part (NOT inside FunctionCall — the field is
+  on genai.Part at v1.58). Without replay Gemini 3 rejects the follow-up turn.
+- **Capture-direction unit test deliberately omitted.** The parse is inline in
+  SendMessages' retry closure (no seam), and the 3 sites use different ID schemes so
+  a shared helper would change behavior / add rebase surface. Field-drop is
+  build-guarded; per-site wiring is covered by U13's live Gemini+tools test. Chose
+  not to refactor upstream structure for a unit test (fork-maintenance discipline).
