@@ -104,3 +104,31 @@ Co-located with the fork work; distilled into overtura `docs/solutions/` at ship
 - xai needs NO code: consumer builds xAI via `image/openai.NewGeneration(WithBaseURL(
   "https://api.x.ai/v1"))`, exactly as the monolith routed ProviderXAI through its
   OpenAIClient. Upstream `image/xai` stays unused.
+
+## U7 — image/openrouter (fork-only) + model fork → 11 modules
+- **Upstream can lack an ENTIRE model family, not just a field.** Upstream's `model`
+  module defines zero OpenRouter image-gen models. Re-homing meant porting the whole
+  `OpenRouterImageGenerationModels` map (6 entries) + 6 ID constants, not just adding
+  the `OutputModalities` field. Grep upstream for the map name before assuming a
+  field-only fork.
+- **The CONSUMER's compile-time dependency is what forces the fork.** The library
+  `image/openrouter` could have used caller-only modalities, but overtura's
+  `ModelEntry.OutputModalities()` reads `e.ImageLibraryModel.OutputModalities` off
+  the library type — so the field MUST exist on `model.ImageGenerationModel`. When
+  deciding fork-vs-consumer-side for a missing field, check what the consumer reads,
+  not just what the library needs. This was a STOP-and-ask fork-set decision (user
+  chose A: fork model) — same class as U2/U5, not something to improvise.
+- **Forking a data module is mechanically cheap** (additive field + verbatim entries;
+  `replace => ../../model` already points local; no consumer churn since the consumer
+  already reads the field). The cost is fork-set size + rebase surface, not code.
+- **`image/openrouter` is fork-only and SDK-free** — raw net/http + encoding/json
+  (OpenRouter's modalities/image_config extensions aren't in the OpenAI SDK types).
+  go.mod requires only image + model (OTEL deps come transitively via image/tracing).
+- **Re-home was character-for-character** (verbatim port of the monolith openrouter.go
+  + the 6 model entries); the archive-diff reviewer found ZERO divergences. The only
+  adaptations were the U6-established ones (image.-prefixed types, exported interface,
+  ApplyGenerationOptionsWithModelDefaults rename, package-scope maxResponseSize const).
+- **U9 landmine flagged**: the consumer references `model.Gemini31FlashImage` (renamed
+  upstream → `Gemini31FlashImagePreview`, alias `NanoBanana2`). Now that `model` is
+  forked, U9 can either re-add the old alias to the fork OR update the consumer — decide
+  at U9. Either way the consumer won't compile against the bare upstream name.
