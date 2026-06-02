@@ -547,31 +547,88 @@ func convertToGenaiSchema(
 
 	for key, val := range properties {
 		if propMap, ok := val.(map[string]any); ok {
-			propSchema := &genai.Schema{}
-			if t, ok := propMap["type"].(string); ok {
-				switch t {
-				case "string":
-					propSchema.Type = genai.TypeString
-				case "number":
-					propSchema.Type = genai.TypeNumber
-				case "integer":
-					propSchema.Type = genai.TypeInteger
-				case "boolean":
-					propSchema.Type = genai.TypeBoolean
-				case "array":
-					propSchema.Type = genai.TypeArray
-				case "object":
-					propSchema.Type = genai.TypeObject
-				}
-			}
-			if desc, ok := propMap["description"].(string); ok {
-				propSchema.Description = desc
-			}
-			schema.Properties[key] = propSchema
+			schema.Properties[key] = convertPropToGenaiSchema(propMap)
 		}
 	}
 
 	return schema
+}
+
+// convertPropToGenaiSchema recursively converts a single JSON-schema property
+// to a genai.Schema. It MUST recurse: an `array` property without `items`, or
+// an `object` without nested `properties`, makes Gemini reject the batch with
+// "response_schema.properties[x].items: missing field". This mirrors the
+// synchronous llm/gemini converter (convertToSchema) so batch structured
+// output and tool parameter schemas behave identically to the sync path.
+func convertPropToGenaiSchema(propMap map[string]any) *genai.Schema {
+	s := &genai.Schema{}
+
+	if desc, ok := propMap["description"].(string); ok {
+		s.Description = desc
+	}
+
+	typeStr, ok := propMap["type"].(string)
+	if !ok {
+		s.Type = genai.TypeString
+		return s
+	}
+	s.Type = mapJSONTypeToGenaiBatch(typeStr)
+
+	switch typeStr {
+	case "array":
+		if items, ok := propMap["items"].(map[string]any); ok {
+			s.Items = convertPropToGenaiSchema(items)
+		}
+	case "object":
+		if props, ok := propMap["properties"].(map[string]any); ok {
+			s.Properties = make(map[string]*genai.Schema, len(props))
+			for k, v := range props {
+				if vm, ok := v.(map[string]any); ok {
+					s.Properties[k] = convertPropToGenaiSchema(vm)
+				}
+			}
+		}
+		if req, ok := propMap["required"].([]any); ok {
+			reqStrs := make([]string, 0, len(req))
+			for _, r := range req {
+				if rs, ok := r.(string); ok {
+					reqStrs = append(reqStrs, rs)
+				}
+			}
+			s.Required = reqStrs
+		}
+	}
+
+	if enum, ok := propMap["enum"].([]any); ok {
+		enumStrings := make([]string, 0, len(enum))
+		for _, v := range enum {
+			if str, ok := v.(string); ok {
+				enumStrings = append(enumStrings, str)
+			}
+		}
+		s.Enum = enumStrings
+	}
+
+	return s
+}
+
+func mapJSONTypeToGenaiBatch(jsonType string) genai.Type {
+	switch jsonType {
+	case "string":
+		return genai.TypeString
+	case "number":
+		return genai.TypeNumber
+	case "integer":
+		return genai.TypeInteger
+	case "boolean":
+		return genai.TypeBoolean
+	case "array":
+		return genai.TypeArray
+	case "object":
+		return genai.TypeObject
+	default:
+		return genai.TypeString
+	}
 }
 
 func convertGeminiResponse(

@@ -97,6 +97,65 @@ func TestConvertToGenaiSchema(t *testing.T) {
 	}
 }
 
+// TestConvertToGenaiSchema_ArrayItemsAndNestedObject is the regression guard
+// for the Gemini-Batch 400 "response_schema.properties[x].items: missing
+// field". Array properties MUST carry Items and object properties MUST recurse
+// into nested Properties — the original converter dropped both.
+func TestConvertToGenaiSchema_ArrayItemsAndNestedObject(t *testing.T) {
+	props := map[string]any{
+		"brands": map[string]any{
+			"type":        "array",
+			"description": "brand names",
+			"items":       map[string]any{"type": "string"},
+		},
+		"meta": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"lang": map[string]any{"type": "string"},
+				"tags": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "string"},
+				},
+			},
+			"required": []any{"lang"},
+		},
+		"status": map[string]any{
+			"type": "string",
+			"enum": []any{"draft", "published"},
+		},
+	}
+	s := convertToGenaiSchema(props, []string{"brands"})
+
+	brands := s.Properties["brands"]
+	if brands.Type != genai.TypeArray {
+		t.Fatalf("brands type = %v, want array", brands.Type)
+	}
+	if brands.Items == nil {
+		t.Fatal("brands.Items is nil — this is the 400-causing bug")
+	}
+	if brands.Items.Type != genai.TypeString {
+		t.Errorf("brands.Items type = %v, want string", brands.Items.Type)
+	}
+
+	meta := s.Properties["meta"]
+	if meta.Type != genai.TypeObject {
+		t.Fatalf("meta type = %v, want object", meta.Type)
+	}
+	if meta.Properties["lang"].Type != genai.TypeString {
+		t.Errorf("meta.lang type = %v, want string", meta.Properties["lang"].Type)
+	}
+	if tags := meta.Properties["tags"]; tags.Type != genai.TypeArray || tags.Items == nil {
+		t.Errorf("meta.tags = %+v, want array with items", tags)
+	}
+	if len(meta.Required) != 1 || meta.Required[0] != "lang" {
+		t.Errorf("meta.Required = %v, want [lang]", meta.Required)
+	}
+
+	if got := s.Properties["status"].Enum; len(got) != 2 || got[0] != "draft" {
+		t.Errorf("status.Enum = %v, want [draft published]", got)
+	}
+}
+
 // TestStructuredOutputRequestAccepted verifies a chat Request carrying an
 // OutputSchema is accepted (the field exists + a Gemini processor builds with
 // it). The live constrained-JSON round-trip is covered by the overtura
