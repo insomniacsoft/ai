@@ -64,23 +64,59 @@ interface, so upstream `image/xai` is unaffected):
 - `image/options.go`: GenerationOptions + all per-call With* funcs + ErrEditNotSupported
   + ApplyGenerationOptions.
 
-REMAINING (the vendor re-home — the bulk):
-1. `image/editing.go` (new): the optioned `ImageGeneration` interface
-   (GenerateImage/GenerateImageStreaming/EditImage/EditImageStreaming with
-   ...GenerationOption + Model()), the optional client interfaces
-   (EditingImageGenerationClient etc.), and the generic base wrapper
-   `baseImageGeneration[C]` that dispatches edit via type assertion + tracing
-   (re-home from fork image_generation.go, 404 LOC). Keep upstream's `Generation`
-   + WithTracing for xai compatibility.
-2. `image/openai/openai.go`: re-home fork openai.go (462 LOC) — generate + edit via
-   `Images.Edit` (/v1/images/edits) with namedImageReader multipart + image_edit.*
-   streaming event discrimination. Implements the optioned interface.
-3. `image/gemini/gemini.go`: re-home fork gemini.go + gemini_native.go (309 LOC) —
-   native GenerateContent IMAGE generate+edit.
-4. xai: decide — either adapt `image/xai` to the optioned interface, or have the
-   consumer (U9) wrap it (grok-2-image is generate-only → EditImage returns
-   ErrEditNotSupported). Lowest-risk: a thin consumer-side adapter.
-5. Per-vendor construction options (WithAPIKey/WithModel/WithTimeout/WithOpenAIOptions/
-   WithGeminiOptions/WithHTTPClient) move onto each vendor module.
-Then U7 (image/openrouter, new module, from fork openrouter.go 264 LOC) + U8 (tag all,
-ensure each module's go.sum is complete — note xai currently needs `go mod download`).
+DONE — U6 complete (commit pending). image, image/openai, image/gemini build +
+vet + test clean; all files < 400 LOC; image/xai (upstream Generation) untouched.
+
+1. `image/editing.go` (new): the optioned `ImageGeneration` interface +
+   `WithEditingTracing(inner, attrs)` wrapper. **DESIGN DECISION (multi-module
+   adaptation):** the monolith expressed optional capabilities (edit, streaming)
+   as interfaces with UNEXPORTED methods (generate/edit/...) dispatched by a
+   central `baseImageGeneration[C]` via type assertion. That cannot survive the
+   module split — unexported interface methods are implementable only inside the
+   declaring package, so a vendor module could never satisfy them. The interface
+   now declares all methods EXPORTED (mirroring upstream's own `Generation`);
+   vendors return `ErrEditNotSupported`/`ErrStreamingNotSupported` for unsupported
+   capabilities, and `SupportsEditing()` probes edit capability. Tracing moved
+   into `WithEditingTracing` (analogous to upstream `WithTracing`) instead of the
+   factory base. The central `NewImageGeneration(provider, ...)` factory is GONE
+   (it would create an import cycle image → image/openai → image); provider
+   selection moves to the consumer (U9), matching upstream's per-vendor
+   `NewGeneration` philosophy.
+2. `image/openai/{openai.go,edit.go}`: generate + edit via `Images.Edit`
+   (/v1/images/edits) with namedImageReader multipart + image_edit.* streaming
+   discrimination. Implements optioned `ImageGeneration`. **openai-go stays at
+   v1.12.0** (the monolith proved the full edit surface — OfFileArray, edit
+   streaming — on v1.12.0; no bump needed; llm/openai's v3 bump is independent).
+   Construction Options: WithAPIKey/WithModel/WithTimeout/WithBaseURL/
+   WithExtraHeaders/WithStreamingOptions. All image knobs are per-call options.
+3. `image/gemini/{gemini.go,imagen.go,helpers.go}`: NewGeneration switches on
+   `isNativeModel` → nativeClient (GenerateContent IMAGE, generate+edit) vs
+   imagenClient (GenerateImages, generate-only, edit→ErrEditNotSupported).
+   Construction Options: WithAPIKey/WithModel/WithTimeout/WithBackend.
+   **DESIGN DECISION 1:** model ID `Gemini31FlashImage` → `Gemini31FlashImagePreview`
+   (upstream `model`, consumed unforked, renamed it; forced).
+   **DESIGN DECISION 2 (labeled divergence):** nativeClient.EditImageStreaming
+   returns `ErrStreamingNotSupported` (editing IS supported, only its streaming
+   variant isn't) — the monolith returned `ErrEditNotSupported` here as an
+   artifact of its type-assertion dispatch. Behaviorally inert (no overtura
+   Gemini streaming-edit caller); VERIFY the consumer doesn't switch on the
+   specific sentinel at U9.
+4. **xai RESOLVED (no new code):** the consumer (U9) builds xAI image via
+   `image/openai.NewGeneration(WithBaseURL("https://api.x.ai/v1"))` — exactly how
+   the monolith routed ProviderXAI through its OpenAIClient. Upstream's prompt-only
+   `image/xai` module stays in the tree, unused by overtura. (SupportsEditing
+   returns true for the openai-backed xAI client, matching the monolith; grok-2-image
+   edit calls would error at the x.ai endpoint — same as before.)
+5. Per-vendor construction options: DONE (see 2, 3).
+
+Tests added (no network): image/options_overtura_test.go (defaults seeding +
+override + empty-ref filtering), image/openai/edit_overtura_test.go (multipart
+MIME detection/rejection, single-vs-multi union, ext map, gpt-image gating),
+image/gemini/gemini_overtura_test.go (native routing, aspect-ratio map, config
+omission, edit-capability sentinels).
+
+Then U7 (image/openrouter, new module, from fork openrouter.go 264 LOC — note its
+mapToAspectRatio/mapToImageSize/resolveModalities/resolveImageSize helpers; the
+gemini copy of mapToAspectRatio now lives in image/gemini/helpers.go) + U8 (tag
+all, ensure each module's go.sum is complete — image/openai + image/gemini already
+tidied this unit; xai also tidied).

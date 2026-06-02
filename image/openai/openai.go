@@ -1,5 +1,13 @@
-// Package openai provides an OpenAI implementation of the [image.Generation]
-// interface. Supports gpt-image-1.5 and gpt-image-2.
+// Package openai provides an OpenAI implementation of the optioned
+// [image.ImageGeneration] interface, supporting per-call generation options and
+// image editing (gpt-image-1 / gpt-image-1.5 via /v1/images/edits).
+//
+// Unlike upstream's prompt-only image/openai (which implements the construct-once
+// [image.Generation] interface), this client takes all image knobs per call via
+// [image.GenerationOption] and supports EditImage. It is the overtura surface
+// re-homed from the monolith fork; the two interfaces cannot share one type
+// because GenerateImage has different signatures, so this module implements
+// [image.ImageGeneration] exclusively. image/xai remains on [image.Generation].
 package openai
 
 import (
@@ -13,84 +21,22 @@ import (
 	"github.com/openai/openai-go/option"
 )
 
-// Size enumerates the image-dimension presets accepted by gpt-image-1.5 and
-// gpt-image-2. Stored as a typed string so a caller can still pass a value
-// outside the enum if OpenAI ships one before this list is updated.
-type Size string
-
-// Supported size values for gpt-image-1.5 / gpt-image-2.
-const (
-	SizeAuto      Size = "auto"
-	Size1024x1024 Size = "1024x1024"
-	Size1024x1536 Size = "1024x1536"
-	Size1536x1024 Size = "1536x1024"
-)
-
-// Quality enumerates the per-image quality presets.
-type Quality string
-
-// Supported quality presets.
-const (
-	QualityLow    Quality = "low"
-	QualityMedium Quality = "medium"
-	QualityHigh   Quality = "high"
-	QualityAuto   Quality = "auto"
-)
-
-// Background controls the generated image's background. Supported by
-// gpt-image-1.5; gpt-image-2 silently rejects this field.
-type Background string
-
-// Supported background values.
-const (
-	BackgroundTransparent Background = "transparent"
-	BackgroundOpaque      Background = "opaque"
-	BackgroundAuto        Background = "auto"
-)
-
-// Moderation sets the content-moderation strictness.
-type Moderation string
-
-// Supported moderation values.
-const (
-	ModerationAuto Moderation = "auto"
-	ModerationLow  Moderation = "low"
-)
-
-// OutputFormat selects the response image encoding.
-type OutputFormat string
-
-// Supported output formats.
-const (
-	OutputFormatPNG  OutputFormat = "png"
-	OutputFormatJPEG OutputFormat = "jpeg"
-	OutputFormatWebP OutputFormat = "webp"
-)
-
 // StreamingOptions contains OpenAI-specific options for streaming image generation.
 type StreamingOptions struct {
 	// PartialImages specifies the number of partial images to receive during streaming (0-3).
-	// If set to 0, only the final image will be received.
-	// You may receive fewer partial images than requested if the full image is generated quickly.
+	// If set to 0, only the final image will be received. You may receive fewer
+	// partial images than requested if the full image is generated quickly.
 	PartialImages int
 }
 
 // Options configures the OpenAI image generation client.
 type Options struct {
-	apiKey            string
-	model             model.ImageGenerationModel
-	timeout           *time.Duration
-	baseURL           string
-	extraHeaders      map[string]string
-	streamingOptions  StreamingOptions
-	n                 *int
-	size              Size
-	quality           Quality
-	background        Background
-	moderation        Moderation
-	outputFormat      OutputFormat
-	outputCompression *int
-	user              string
+	apiKey           string
+	model            model.ImageGenerationModel
+	timeout          *time.Duration
+	baseURL          string
+	extraHeaders     map[string]string
+	streamingOptions StreamingOptions
 }
 
 // Option configures Options.
@@ -107,11 +53,12 @@ func WithModel(m model.ImageGenerationModel) Option {
 }
 
 // WithTimeout sets the maximum duration to wait for a single request.
-func WithTimeout(timeout time.Duration) Option {
-	return func(o *Options) { o.timeout = &timeout }
+func WithTimeout(d time.Duration) Option {
+	return func(o *Options) { o.timeout = &d }
 }
 
-// WithBaseURL points the client at a custom OpenAI-compatible endpoint.
+// WithBaseURL points the client at a custom OpenAI-compatible endpoint
+// (used for xAI's OpenAI-compatible image API).
 func WithBaseURL(baseURL string) Option {
 	return func(o *Options) { o.baseURL = baseURL }
 }
@@ -121,74 +68,30 @@ func WithExtraHeaders(headers map[string]string) Option {
 	return func(o *Options) { o.extraHeaders = headers }
 }
 
-// WithStreamingOptions configures streaming behaviour (e.g. partial-image count).
+// WithStreamingOptions configures streaming behaviour (partial-image count).
 func WithStreamingOptions(opts StreamingOptions) Option {
 	return func(o *Options) { o.streamingOptions = opts }
 }
 
-// WithN sets how many images to generate per request (1–10).
-func WithN(n int) Option {
-	return func(o *Options) { o.n = &n }
-}
-
-// WithSize sets the image dimensions. See [Size] for valid values.
-func WithSize(s Size) Option {
-	return func(o *Options) { o.size = s }
-}
-
-// WithQuality sets the per-image quality preset. See [Quality] for valid values.
-func WithQuality(q Quality) Option {
-	return func(o *Options) { o.quality = q }
-}
-
-// WithBackground requests transparent/opaque/auto. Supported by gpt-image-1.5;
-// gpt-image-2 silently rejects this field.
-func WithBackground(b Background) Option {
-	return func(o *Options) { o.background = b }
-}
-
-// WithModeration sets the content-moderation strictness.
-func WithModeration(m Moderation) Option {
-	return func(o *Options) { o.moderation = m }
-}
-
-// WithOutputFormat selects the response image encoding.
-func WithOutputFormat(f OutputFormat) Option {
-	return func(o *Options) { o.outputFormat = f }
-}
-
-// WithOutputCompression sets jpeg/webp compression quality (0–100).
-func WithOutputCompression(quality int) Option {
-	return func(o *Options) { o.outputCompression = &quality }
-}
-
-// WithUser tags the request with an end-user identifier for abuse-monitoring.
-func WithUser(user string) Option {
-	return func(o *Options) { o.user = user }
-}
-
-// Client implements [image.Generation] against the OpenAI image generation API.
+// Client implements [image.ImageGeneration] against the OpenAI image API.
 type Client struct {
 	options Options
 	client  openaisdk.Client
 }
 
 // NewGeneration constructs an OpenAI image generation client. The returned
-// [image.Generation] is wrapped with [image.WithTracing], so callers always
-// get tracing spans and metrics.
-func NewGeneration(opts ...Option) image.Generation {
+// [image.ImageGeneration] is wrapped with [image.WithEditingTracing], so callers
+// always get tracing spans and metrics.
+func NewGeneration(opts ...Option) image.ImageGeneration {
 	options := Options{
-		streamingOptions: StreamingOptions{
-			PartialImages: 2,
-		},
+		extraHeaders:     map[string]string{},
+		streamingOptions: StreamingOptions{PartialImages: 2},
 	}
 	for _, o := range opts {
 		o(&options)
 	}
 
-	clientOpts := []option.RequestOption{
-		option.WithAPIKey(options.apiKey),
-	}
+	clientOpts := []option.RequestOption{option.WithAPIKey(options.apiKey)}
 	if options.baseURL != "" {
 		clientOpts = append(clientOpts, option.WithBaseURL(options.baseURL))
 	}
@@ -196,142 +99,98 @@ func NewGeneration(opts ...Option) image.Generation {
 		clientOpts = append(clientOpts, option.WithHeader(k, v))
 	}
 
-	return image.WithTracing(&Client{
+	return image.WithEditingTracing(&Client{
 		options: options,
 		client:  openaisdk.NewClient(clientOpts...),
 	}, image.TracingAttrs{})
 }
 
 // Model returns the configured image generation model.
-func (c *Client) Model() model.ImageGenerationModel {
-	return c.options.model
+func (c *Client) Model() model.ImageGenerationModel { return c.options.model }
+
+// withTimeout derives a context bounded by the configured per-request timeout.
+// When no timeout is set it returns ctx and a no-op cancel.
+func (c *Client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.options.timeout != nil {
+		return context.WithTimeout(ctx, *c.options.timeout)
+	}
+	return ctx, func() {}
 }
 
-func (c *Client) buildParams(prompt string) openaisdk.ImageGenerateParams {
-	apiModel := c.options.model.APIModel
-	params := openaisdk.ImageGenerateParams{
-		Prompt: prompt,
-		Model:  openaisdk.ImageModel(apiModel),
-	}
-
-	n := 1
-	if c.options.n != nil {
-		n = *c.options.n
-	}
-	params.N = openaisdk.Int(int64(n))
-
-	size := c.options.size
-	if size == "" {
-		size = Size(c.options.model.DefaultSize)
-	}
-	if size != "" {
-		params.Size = openaisdk.ImageGenerateParamsSize(size)
-	}
-
-	quality := c.options.quality
-	if quality == "" {
-		quality = Quality(c.options.model.DefaultQuality)
-	}
-	if quality != "" {
-		params.Quality = openaisdk.ImageGenerateParamsQuality(quality)
-	}
-
-	if c.options.background != "" && apiModel != "gpt-image-2" {
-		params.Background = openaisdk.ImageGenerateParamsBackground(
-			c.options.background,
-		)
-	}
-	if c.options.moderation != "" {
-		params.Moderation = openaisdk.ImageGenerateParamsModeration(
-			c.options.moderation,
-		)
-	}
-	if c.options.outputFormat != "" {
-		params.OutputFormat = openaisdk.ImageGenerateParamsOutputFormat(
-			c.options.outputFormat,
-		)
-	}
-	if c.options.outputCompression != nil {
-		params.OutputCompression = openaisdk.Int(
-			int64(*c.options.outputCompression),
-		)
-	}
-	if c.options.user != "" {
-		params.User = openaisdk.String(c.options.user)
-	}
-
-	return params
-}
+// SupportsEditing reports that the OpenAI image client supports editing.
+func (c *Client) SupportsEditing() bool { return true }
 
 // GenerateImage performs a non-streaming image generation request.
 func (c *Client) GenerateImage(
 	ctx context.Context,
 	prompt string,
+	options ...image.GenerationOption,
 ) (*image.GenerationResponse, error) {
-	params := c.buildParams(prompt)
+	genOpts := image.ApplyGenerationOptionsWithModelDefaults(c.options.model, "url", options...)
 
-	if c.options.timeout != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *c.options.timeout)
-		defer cancel()
+	params := openaisdk.ImageGenerateParams{
+		Prompt: prompt,
+		Model:  openaisdk.ImageModel(c.options.model.APIModel),
+		N:      openaisdk.Int(int64(genOpts.N)),
 	}
+
+	if genOpts.ResponseFormat != "" && !isGPTImage(c.options.model.APIModel) {
+		params.ResponseFormat = openaisdk.ImageGenerateParamsResponseFormat(genOpts.ResponseFormat)
+	}
+	if genOpts.Size != "" && len(c.options.model.SupportedSizes) > 0 {
+		params.Size = openaisdk.ImageGenerateParamsSize(genOpts.Size)
+	}
+	if genOpts.Quality != "" && genOpts.Quality != "default" && len(c.options.model.SupportedQualities) > 1 {
+		params.Quality = openaisdk.ImageGenerateParamsQuality(genOpts.Quality)
+	}
+
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
 
 	response, err := c.client.Images.Generate(ctx, params)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate image: %w", err)
 	}
-
-	results := make([]image.GenerationResult, 0, len(response.Data))
-	for _, img := range response.Data {
-		result := image.GenerationResult{
-			RevisedPrompt: img.RevisedPrompt,
-		}
-		if img.URL != "" {
-			result.ImageURL = img.URL
-		}
-		if img.B64JSON != "" {
-			result.ImageBase64 = img.B64JSON
-		}
-		results = append(results, result)
-	}
-
-	return &image.GenerationResponse{
-		Images: results,
-		Usage:  image.GenerationUsage{PromptTokens: 0},
-		Model:  c.options.model.APIModel,
-	}, nil
+	return mapResponse(response, c.options.model), nil
 }
 
-// GenerateImageStreaming performs a streaming image generation request.
-// Returns [image.ErrStreamingNotSupported] if the configured model does not
-// support streaming.
+// GenerateImageStreaming performs a streaming image generation request. Returns
+// [image.ErrStreamingNotSupported] if the configured model does not stream.
 func (c *Client) GenerateImageStreaming(
 	ctx context.Context,
 	prompt string,
 	callback image.StreamCallback,
+	options ...image.GenerationOption,
 ) error {
 	if !c.options.model.SupportsStreaming {
 		return image.ErrStreamingNotSupported
 	}
 
-	params := c.buildParams(prompt)
-	params.PartialImages = openaisdk.Int(
-		int64(c.options.streamingOptions.PartialImages),
-	)
+	genOpts := image.ApplyGenerationOptionsWithModelDefaults(c.options.model, "", options...)
 
-	if c.options.timeout != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *c.options.timeout)
-		defer cancel()
+	params := openaisdk.ImageGenerateParams{
+		Prompt:        prompt,
+		Model:         openaisdk.ImageModel(c.options.model.APIModel),
+		N:             openaisdk.Int(int64(genOpts.N)),
+		PartialImages: openaisdk.Int(int64(c.options.streamingOptions.PartialImages)),
+	}
+	if genOpts.Size != "" && len(c.options.model.SupportedSizes) > 0 {
+		params.Size = openaisdk.ImageGenerateParamsSize(genOpts.Size)
+	}
+	if genOpts.Quality != "" && genOpts.Quality != "default" && len(c.options.model.SupportedQualities) > 1 {
+		params.Quality = openaisdk.ImageGenerateParamsQuality(genOpts.Quality)
 	}
 
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
 	stream := c.client.Images.GenerateStreaming(ctx, params)
+	defer stream.Close()
 
 	for stream.Next() {
 		event := stream.Current()
-
 		switch event.Type {
-		case "image.partial_image":
+		case "image_generation.partial_image":
 			if err := callback(image.StreamEvent{
 				Type:              image.EventPartialImage,
 				ImageBase64:       event.B64JSON,
@@ -341,8 +200,7 @@ func (c *Client) GenerateImageStreaming(
 			}); err != nil {
 				return fmt.Errorf("callback error on partial image: %w", err)
 			}
-
-		case "image.completed":
+		case "image_generation.completed":
 			if err := callback(image.StreamEvent{
 				Type:        image.EventCompleted,
 				ImageBase64: event.B64JSON,
@@ -353,9 +211,34 @@ func (c *Client) GenerateImageStreaming(
 			}
 		}
 	}
-
 	if err := stream.Err(); err != nil {
 		return fmt.Errorf("streaming error: %w", err)
 	}
 	return nil
+}
+
+// isGPTImage reports whether the API model is a gpt-image-* model, which rejects
+// the response_format parameter (it always returns b64_json).
+func isGPTImage(apiModel string) bool {
+	switch apiModel {
+	case "gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini":
+		return true
+	default:
+		return false
+	}
+}
+
+func mapResponse(resp *openaisdk.ImagesResponse, m model.ImageGenerationModel) *image.GenerationResponse {
+	results := make([]image.GenerationResult, 0, len(resp.Data))
+	for _, img := range resp.Data {
+		result := image.GenerationResult{RevisedPrompt: img.RevisedPrompt}
+		if img.URL != "" {
+			result.ImageURL = img.URL
+		}
+		if img.B64JSON != "" {
+			result.ImageBase64 = img.B64JSON
+		}
+		results = append(results, result)
+	}
+	return &image.GenerationResponse{Images: results, Model: m.APIModel}
 }

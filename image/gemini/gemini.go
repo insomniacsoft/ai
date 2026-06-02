@@ -1,11 +1,26 @@
-// Package gemini provides a Google Gemini implementation of the
-// [image.Generation] interface.
+// Package gemini provides a Google Gemini implementation of the optioned
+// [image.ImageGeneration] interface. It exposes two backends behind a single
+// NewGeneration constructor:
+//
+//   - The Imagen path ([imagenClient], via Models.GenerateImages) for the
+//     Imagen-family models — generation only.
+//   - The native path ([nativeClient], via Models.GenerateContent with IMAGE
+//     response modality) for the Gemini-image models (gemini-2.5-flash-image,
+//     gemini-3-pro-image, gemini-3.1-flash-image) — generation AND conversational
+//     editing via inline image data.
+//
+// This is the overtura optioned surface re-homed from the monolith fork. Like
+// image/openai it implements [image.ImageGeneration] (per-call options + edit),
+// not upstream's prompt-only [image.Generation].
 package gemini
 
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/joakimcarlsson/ai/image"
@@ -13,73 +28,18 @@ import (
 	"google.golang.org/genai"
 )
 
-// AspectRatio enumerates aspect-ratio values across the Imagen 4 family and
-// Gemini Image variants. Imagen 4 supports the first 5; Gemini 2.5 Flash Image
-// and Gemini 3 Pro Image accept the full 10. Stored as a typed string so a
-// caller can still pass a value outside the enum if Google ships one before
-// this list is updated.
-type AspectRatio string
-
-// Aspect-ratio values per the Imagen and Gemini Image documentation.
-const (
-	AspectRatio1x1  AspectRatio = "1:1"
-	AspectRatio3x4  AspectRatio = "3:4"
-	AspectRatio4x3  AspectRatio = "4:3"
-	AspectRatio9x16 AspectRatio = "9:16"
-	AspectRatio16x9 AspectRatio = "16:9"
-	// Gemini Image only:
-	AspectRatio2x3  AspectRatio = "2:3"
-	AspectRatio3x2  AspectRatio = "3:2"
-	AspectRatio4x5  AspectRatio = "4:5"
-	AspectRatio5x4  AspectRatio = "5:4"
-	AspectRatio21x9 AspectRatio = "21:9"
-)
-
-// ImageSize enumerates the largest-dimension presets. Imagen 4 std/ultra accept
-// 1K and 2K; Gemini 3 Pro Image additionally accepts 4K. Imagen 4 Fast and
-// Gemini 2.5 Flash Image have a fixed dimension and reject this field.
-type ImageSize string
-
-// Supported image-size presets.
-const (
-	ImageSize1K ImageSize = "1K"
-	ImageSize2K ImageSize = "2K"
-	ImageSize4K ImageSize = "4K"
-)
-
-// OutputMIMEType selects the response image MIME type. Imagen-only.
-type OutputMIMEType string
-
-// Supported output-MIME-type values.
-const (
-	OutputMIMETypePNG  OutputMIMEType = "image/png"
-	OutputMIMETypeJPEG OutputMIMEType = "image/jpeg"
-)
-
 // Options configures the Gemini image generation client.
 type Options struct {
-	apiKey                   string
-	model                    model.ImageGenerationModel
-	timeout                  *time.Duration
-	backend                  genai.Backend
-	n                        *int32
-	aspectRatio              AspectRatio
-	negativePrompt           string
-	seed                     *int32
-	personGeneration         *genai.PersonGeneration
-	safetyFilterLevel        *genai.SafetyFilterLevel
-	language                 *genai.ImagePromptLanguage
-	enhancePrompt            *bool
-	imageSize                ImageSize
-	includeRAIReason         *bool
-	outputMIMEType           OutputMIMEType
-	outputCompressionQuality *int32
+	apiKey  string
+	model   model.ImageGenerationModel
+	timeout *time.Duration
+	backend genai.Backend
 }
 
 // Option configures Options.
 type Option func(*Options)
 
-// WithAPIKey sets the API key used to authenticate with Gemini.
+// WithAPIKey sets the API key used to authenticate with the Gemini API.
 func WithAPIKey(apiKey string) Option {
 	return func(o *Options) { o.apiKey = apiKey }
 }
@@ -90,223 +50,179 @@ func WithModel(m model.ImageGenerationModel) Option {
 }
 
 // WithTimeout sets the maximum duration to wait for a single request.
-func WithTimeout(timeout time.Duration) Option {
-	return func(o *Options) { o.timeout = &timeout }
+func WithTimeout(d time.Duration) Option {
+	return func(o *Options) { o.timeout = &d }
 }
 
-// WithBackend selects the Gemini backend (GeminiAPI or VertexAI).
+// WithBackend selects the Gemini backend (GeminiAPI or VertexAI). Defaults to
+// genai.BackendGeminiAPI.
 func WithBackend(backend genai.Backend) Option {
 	return func(o *Options) { o.backend = backend }
 }
 
-// WithN sets how many images to generate (Imagen accepts 1–4).
-func WithN(n int32) Option {
-	return func(o *Options) { o.n = &n }
-}
-
-// WithAspectRatio sets the aspect ratio. See [AspectRatio] for valid values
-// (Imagen accepts the first 5; Gemini Image accepts all 10).
-func WithAspectRatio(ratio AspectRatio) Option {
-	return func(o *Options) { o.aspectRatio = ratio }
-}
-
-// WithNegativePrompt describes content the model should avoid. Imagen-only.
-func WithNegativePrompt(prompt string) Option {
-	return func(o *Options) { o.negativePrompt = prompt }
-}
-
-// WithSeed sets the random seed for reproducible generation. Imagen-only.
-// Note: Imagen requires AddWatermark=false to honour the seed.
-func WithSeed(seed int32) Option {
-	return func(o *Options) { o.seed = &seed }
-}
-
-// WithPersonGeneration configures whether and how people may appear.
-// Pass one of [genai.PersonGenerationDontAllow], [genai.PersonGenerationAllowAdult],
-// or [genai.PersonGenerationAllowAll].
-func WithPersonGeneration(p genai.PersonGeneration) Option {
-	return func(o *Options) { o.personGeneration = &p }
-}
-
-// WithSafetyFilterLevel sets the safety-filter strictness. Imagen-only.
-// Pass one of the [genai.SafetyFilterLevel] constants.
-func WithSafetyFilterLevel(level genai.SafetyFilterLevel) Option {
-	return func(o *Options) { o.safetyFilterLevel = &level }
-}
-
-// WithLanguage declares the prompt language. Imagen-only.
-// Pass one of the [genai.ImagePromptLanguage] constants.
-func WithLanguage(lang genai.ImagePromptLanguage) Option {
-	return func(o *Options) { o.language = &lang }
-}
-
-// WithEnhancePrompt toggles Imagen's prompt-rewriting logic. Imagen-only.
-func WithEnhancePrompt(enhance bool) Option {
-	return func(o *Options) { o.enhancePrompt = &enhance }
-}
-
-// WithImageSize sets the largest-dimension target. See [ImageSize] for valid
-// values. Imagen 4 std/ultra accept 1K/2K; gemini-3-pro-image-preview adds 4K.
-// Imagen 4 Fast and gemini-2.5-flash-image have a fixed dimension and reject
-// this field.
-func WithImageSize(size ImageSize) Option {
-	return func(o *Options) { o.imageSize = size }
-}
-
-// WithIncludeRAIReason includes the Responsible AI block reason in the
-// response when an image is filtered out. Imagen-only.
-func WithIncludeRAIReason(include bool) Option {
-	return func(o *Options) { o.includeRAIReason = &include }
-}
-
-// WithOutputMIMEType sets the response MIME type. Imagen-only. See
-// [OutputMIMEType] for valid values.
-func WithOutputMIMEType(mime OutputMIMEType) Option {
-	return func(o *Options) { o.outputMIMEType = mime }
-}
-
-// WithOutputCompressionQuality sets jpeg compression quality (0–100). Imagen
-// jpeg only.
-func WithOutputCompressionQuality(quality int32) Option {
-	return func(o *Options) { o.outputCompressionQuality = &quality }
-}
-
-// Client implements [image.Generation] against the Google Gemini API.
-type Client struct {
-	options Options
-	client  *genai.Client
-}
-
-// NewGeneration constructs a Gemini image generation client. The returned
-// [image.Generation] is wrapped with [image.WithTracing], so callers always
-// get tracing spans and metrics.
-func NewGeneration(opts ...Option) image.Generation {
-	options := Options{
-		backend: genai.BackendGeminiAPI,
-	}
+// NewGeneration constructs a Gemini image generation client. Native-image models
+// get the conversational-edit-capable backend; the rest get the Imagen backend.
+// The returned [image.ImageGeneration] is wrapped with [image.WithEditingTracing].
+func NewGeneration(opts ...Option) image.ImageGeneration {
+	options := Options{backend: genai.BackendGeminiAPI}
 	for _, o := range opts {
 		o(&options)
 	}
 
-	client, _ := genai.NewClient(
-		context.Background(),
-		&genai.ClientConfig{
-			APIKey:  options.apiKey,
-			Backend: options.backend,
-		},
-	)
+	// A nil client is tolerated here (matches the monolith): construction never
+	// returned an error, and a failed client surfaces as a request-time error.
+	client, _ := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:  options.apiKey,
+		Backend: options.backend,
+	})
 
-	return image.WithTracing(&Client{
-		options: options,
-		client:  client,
-	}, image.TracingAttrs{})
+	if isNativeModel(options.model) {
+		return image.WithEditingTracing(&nativeClient{client: client, options: options}, image.TracingAttrs{})
+	}
+	return image.WithEditingTracing(&imagenClient{client: client, options: options}, image.TracingAttrs{})
+}
+
+// nativeClient implements generation and editing via GenerateContent with the
+// IMAGE response modality.
+type nativeClient struct {
+	client  *genai.Client
+	options Options
 }
 
 // Model returns the configured image generation model.
-func (c *Client) Model() model.ImageGenerationModel {
-	return c.options.model
+func (g *nativeClient) Model() model.ImageGenerationModel { return g.options.model }
+
+// SupportsEditing reports that the native Gemini image client supports editing.
+func (g *nativeClient) SupportsEditing() bool { return true }
+
+func (g *nativeClient) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if g.options.timeout != nil {
+		return context.WithTimeout(ctx, *g.options.timeout)
+	}
+	return ctx, func() {}
 }
 
-func (c *Client) buildConfig() *genai.GenerateImagesConfig {
-	config := &genai.GenerateImagesConfig{}
-
-	n := int32(1)
-	if c.options.n != nil {
-		n = *c.options.n
-	}
-	config.NumberOfImages = n
-
-	aspect := c.options.aspectRatio
-	if aspect == "" {
-		aspect = AspectRatio(c.options.model.DefaultAspectRatio)
-	}
-	if aspect != "" && aspect != AspectRatio1x1 {
-		config.AspectRatio = string(aspect)
-	}
-
-	if c.options.negativePrompt != "" {
-		config.NegativePrompt = c.options.negativePrompt
-	}
-	if c.options.seed != nil {
-		config.Seed = c.options.seed
-	}
-	if c.options.personGeneration != nil {
-		config.PersonGeneration = *c.options.personGeneration
-	}
-	if c.options.safetyFilterLevel != nil {
-		config.SafetyFilterLevel = *c.options.safetyFilterLevel
-	}
-	if c.options.language != nil {
-		config.Language = *c.options.language
-	}
-	if c.options.enhancePrompt != nil {
-		config.EnhancePrompt = *c.options.enhancePrompt
-	}
-	if c.options.imageSize != "" {
-		config.ImageSize = string(c.options.imageSize)
-	}
-	if c.options.includeRAIReason != nil {
-		config.IncludeRAIReason = *c.options.includeRAIReason
-	}
-	if c.options.outputMIMEType != "" {
-		config.OutputMIMEType = string(c.options.outputMIMEType)
-	}
-	if c.options.outputCompressionQuality != nil {
-		config.OutputCompressionQuality = c.options.outputCompressionQuality
-	}
-
-	return config
-}
-
-// GenerateImage performs a non-streaming image generation request.
-func (c *Client) GenerateImage(
+// GenerateImage creates an image from a text prompt.
+func (g *nativeClient) GenerateImage(
 	ctx context.Context,
 	prompt string,
+	options ...image.GenerationOption,
 ) (*image.GenerationResponse, error) {
-	config := c.buildConfig()
+	opts := image.ApplyGenerationOptionsWithModelDefaults(g.options.model, "b64_json", options...)
 
-	if c.options.timeout != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *c.options.timeout)
-		defer cancel()
+	config := &genai.GenerateContentConfig{
+		ResponseModalities: []string{"IMAGE", "TEXT"},
+		ImageConfig:        geminiImageConfig(opts),
 	}
 
-	response, err := c.client.Models.GenerateImages(
-		ctx,
-		c.options.model.APIModel,
-		prompt,
-		config,
-	)
+	ctx, cancel := g.withTimeout(ctx)
+	defer cancel()
+
+	resp, err := g.client.Models.GenerateContent(ctx, g.options.model.APIModel, genai.Text(prompt), config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate image: %w", err)
 	}
-
-	results := make(
-		[]image.GenerationResult,
-		0,
-		len(response.GeneratedImages),
-	)
-	for _, img := range response.GeneratedImages {
-		results = append(results, image.GenerationResult{
-			ImageBase64: base64.StdEncoding.EncodeToString(
-				img.Image.ImageBytes,
-			),
-		})
-	}
-
-	return &image.GenerationResponse{
-		Images: results,
-		Usage:  image.GenerationUsage{PromptTokens: 0},
-		Model:  c.options.model.APIModel,
-	}, nil
+	return g.mapResponse(resp)
 }
 
-// GenerateImageStreaming returns [image.ErrStreamingNotSupported]; the Gemini
-// API does not currently expose streaming image generation.
-func (c *Client) GenerateImageStreaming(
-	_ context.Context,
-	_ string,
-	_ image.StreamCallback,
+// EditImage edits an existing image. The source image is provided through
+// [image.WithInputImage].
+func (g *nativeClient) EditImage(
+	ctx context.Context,
+	prompt string,
+	options ...image.GenerationOption,
+) (*image.GenerationResponse, error) {
+	opts := image.ApplyGenerationOptionsWithModelDefaults(g.options.model, "b64_json", options...)
+	if len(opts.InputImage) == 0 {
+		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data)")
+	}
+
+	mimeType := detectImageMIME(opts.InputImage)
+	if !isAllowedImageMIME(mimeType) {
+		return nil, fmt.Errorf("unsupported image type: %s", mimeType)
+	}
+
+	config := &genai.GenerateContentConfig{
+		ResponseModalities: []string{"IMAGE", "TEXT"},
+		ImageConfig:        geminiImageConfig(opts),
+	}
+	contents := []*genai.Content{{
+		Role: genai.RoleUser,
+		Parts: []*genai.Part{
+			{InlineData: &genai.Blob{MIMEType: mimeType, Data: opts.InputImage}},
+			{Text: prompt},
+		},
+	}}
+
+	ctx, cancel := g.withTimeout(ctx)
+	defer cancel()
+
+	resp, err := g.client.Models.GenerateContent(ctx, g.options.model.APIModel, contents, config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to edit image: %w", err)
+	}
+	return g.mapResponse(resp)
+}
+
+// GenerateImageStreaming is not supported by the native Gemini image backend.
+func (g *nativeClient) GenerateImageStreaming(
+	context.Context, string, image.StreamCallback, ...image.GenerationOption,
 ) error {
 	return image.ErrStreamingNotSupported
+}
+
+// EditImageStreaming is not supported by the native Gemini image backend.
+func (g *nativeClient) EditImageStreaming(
+	context.Context, string, image.StreamCallback, ...image.GenerationOption,
+) error {
+	return image.ErrStreamingNotSupported
+}
+
+func (g *nativeClient) mapResponse(resp *genai.GenerateContentResponse) (*image.GenerationResponse, error) {
+	if err := checkFinishReason(resp); err != nil {
+		return nil, err
+	}
+
+	var results []image.GenerationResult
+	for _, candidate := range resp.Candidates {
+		if candidate.Content == nil {
+			continue
+		}
+		for _, part := range candidate.Content.Parts {
+			if part.InlineData != nil && strings.HasPrefix(part.InlineData.MIMEType, "image/") {
+				results = append(results, image.GenerationResult{
+					ImageBase64: base64.StdEncoding.EncodeToString(part.InlineData.Data),
+				})
+			}
+		}
+	}
+	if len(results) == 0 {
+		return nil, errors.New("no image generated in response")
+	}
+	return &image.GenerationResponse{Images: results, Model: g.options.model.APIModel}, nil
+}
+
+func isNativeModel(m model.ImageGenerationModel) bool {
+	switch m.ID {
+	case model.Gemini25FlashImage, model.Gemini3ProImage, model.Gemini31FlashImagePreview:
+		return true
+	default:
+		return false
+	}
+}
+
+func detectImageMIME(data []byte) string {
+	if len(data) == 0 {
+		return "application/octet-stream"
+	}
+	return http.DetectContentType(data)
+}
+
+func isAllowedImageMIME(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/webp", "image/gif":
+		return true
+	default:
+		return false
+	}
 }

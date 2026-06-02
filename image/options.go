@@ -1,6 +1,10 @@
 package image
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/joakimcarlsson/ai/model"
+)
 
 // ErrEditNotSupported is returned when image editing is requested but the model
 // (or vendor client) does not support it. Vendor clients that implement only
@@ -133,6 +137,28 @@ func WithImageSize(size string) GenerationOption {
 // clients call this to resolve the per-call surface.
 func ApplyGenerationOptions(opts ...GenerationOption) GenerationOptions {
 	var o GenerationOptions
+	for _, opt := range opts {
+		opt(&o)
+	}
+	return o
+}
+
+// ApplyGenerationOptionsWithModelDefaults seeds Size and Quality from the model's
+// configured defaults and ResponseFormat from defaultResponseFormat (providers
+// differ: OpenAI defaults to "url", Gemini to "b64_json"), then overlays the
+// caller's options. Vendor clients use this so an unset per-call knob falls back
+// to the model default rather than the zero value.
+func ApplyGenerationOptionsWithModelDefaults(
+	m model.ImageGenerationModel,
+	defaultResponseFormat string,
+	opts ...GenerationOption,
+) GenerationOptions {
+	o := GenerationOptions{
+		Size:           m.DefaultSize,
+		Quality:        m.DefaultQuality,
+		ResponseFormat: defaultResponseFormat,
+		N:              1,
+	}
 	for _, opt := range opts {
 		opt(&o)
 	}
