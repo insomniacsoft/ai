@@ -746,10 +746,12 @@ func (c *Client) toolCalls(msg anthropicsdk.Message) []message.ToolCall {
 
 func (c *Client) usage(msg anthropicsdk.Message) llm.TokenUsage {
 	return llm.TokenUsage{
-		InputTokens:         msg.Usage.InputTokens,
-		OutputTokens:        msg.Usage.OutputTokens,
-		CacheCreationTokens: msg.Usage.CacheCreationInputTokens,
-		CacheReadTokens:     msg.Usage.CacheReadInputTokens,
+		InputTokens:           msg.Usage.InputTokens,
+		OutputTokens:          msg.Usage.OutputTokens,
+		CacheCreationTokens:   msg.Usage.CacheCreationInputTokens,
+		CacheReadTokens:       msg.Usage.CacheReadInputTokens,
+		CacheCreation5mTokens: msg.Usage.CacheCreation.Ephemeral5mInputTokens,
+		CacheCreation1hTokens: msg.Usage.CacheCreation.Ephemeral1hInputTokens,
 	}
 }
 
