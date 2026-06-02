@@ -183,3 +183,39 @@ in U10 still applies, but the "unforked" framing does not. Also resolve the
 `model.Gemini31FlashImage`→`Gemini31FlashImagePreview` rename (re-add alias to the
 fork, or update the consumer) — the consumer's catalog_descriptors.go uses the old
 name.
+
+## U8 — DONE (published + verified)
+
+Pushed `multimodule` branch + 11 per-module tags to origin
+(github.com/insomniacsoft/ai). Final tags:
+- agent/v0.2.1-overtura.2  (.1 was broken — see below — deleted; .2 is canonical)
+- model/v0.3.0-overtura.1, message/v0.1.0-overtura.1, llm/v0.2.0-overtura.1,
+  llm/anthropic/v0.2.2-overtura.1, llm/openai/v0.3.2-overtura.1,
+  llm/gemini/v0.2.2-overtura.1, image/v0.1.0-overtura.1,
+  image/openai/v0.1.0-overtura.1, image/gemini/v0.1.2-overtura.1,
+  image/openrouter/v0.1.0-overtura.1
+
+**Pass (2) GOWORK=off verification: GREEN.** Synthetic consumer fetching all 11
+from published tags via GOPRIVATE, clean module cache, no go.work — `go mod tidy`
++ `go build ./...` both clean. Resolution confirmed: every fork module →
+insomniacsoft tag; unforked deps (memory v0.2.0, session/tool/tracing v0.1.0) →
+upstream joakimcarlsson. **Phase 2 gate satisfied.**
+
+**Pass (2) caught a real broken pin** (the whole point of the GOWORK=off gate):
+agent used `memory.Tools` (in memory/v0.2.0) but pinned `memory v0.1.0`; the local
+`replace => ../memory` masked it (upstream main has the same mis-pin + relies on
+the same workspace replace). Fixed: agent → memory/embeddings/schema v0.2.0.
+
+### Consumer replace template (for U9 — overtura's go.mod)
+Each forked joakimcarlsson path maps to the insomniacsoft repo at its tag; unforked
+paths are NOT replaced (resolve from upstream). GOPRIVATE=github.com/insomniacsoft/*
+on all dev/CI runners. Template (the 11 lines from /tmp/fork-verify3/go.mod):
+`github.com/joakimcarlsson/ai/<mod> => github.com/insomniacsoft/ai/<mod> <tag>`.
+
+### go.work deferred to U9 (deliberate)
+The plan's "uncommitted go.work in the overtura worktree" was NOT created now: the
+overtura worktree is SHARED with parallel sessions, and overtura still imports the
+monolith `github.com/joakimcarlsson/ai v0.18.5` (not the per-module fork) until U9.
+A live go.work there would change `go` resolution for parallel sessions for zero
+pre-U9 benefit. Create it as the first step of U9, alongside the consumer import
+rewrite, using `use ./server` + the 11 `../insomniacsoft-ai-mm/<mod>` dirs.
