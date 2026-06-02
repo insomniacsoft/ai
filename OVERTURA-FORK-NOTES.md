@@ -219,3 +219,24 @@ monolith `github.com/joakimcarlsson/ai v0.18.5` (not the per-module fork) until 
 A live go.work there would change `go` resolution for parallel sessions for zero
 pre-U9 benefit. Create it as the first step of U9, alongside the consumer import
 rewrite, using `use ./server` + the 11 `../insomniacsoft-ai-mm/<mod>` dirs.
+
+## U14 — per-module fork-exit classification (non-blocking)
+
+Every forked module's delta classified so the rebase burden has a defined sunset.
+**Opening the upstream PRs is an outward-facing action against the third-party
+joakimcarlsson/ai repo — NOT yet done; awaiting authorization.**
+
+| Module | Delta | Class | Exit path |
+|---|---|---|---|
+| llm/gemini | tool-result role `function`→`user`; ThoughtSignature capture/replay | **upstreamable correctness fix** | PR to upstream — both are plain bugs (Gemini 400s without them). Highest-value PR. |
+| message | `ToolCall.ThoughtSignature []byte` field | **upstreamable** (enables the Gemini fix) | PR alongside the Gemini fix; fork exits when merged. |
+| llm/openai | Responses prompt-cache-key / chaining / retention / service-tier / max-tool-calls options; turn-1 chain-trap Store invariant | **upstreamable feature + fix** | Propose options upstream; chain-trap is a fix. Larger PR; fork persists until accepted. |
+| llm + agent | `Response.ProviderResponseID` threaded to `ChatResponse` | **upstreamable feature** | Propose; lowest-friction variant writes the ID into upstream's existing `ProviderMetadata` map, but the agent-layer threading is still needed. |
+| llm/anthropic | cache-TTL pinning (1h), metadata.user_id, auto-last-block cache_control | **upstreamable feature** | Propose as options; fork persists until accepted. |
+| model | `OutputModalities` field + OpenRouter image models + gpt-image-1/1-mini re-add + af8b201 Anthropic cache-read pricing fix | **mixed** | Pricing fix + OutputModalities are upstreamable; gpt-image-1/mini re-add is an overtura catalog choice (likely **permanent fork** — upstream deliberately dropped them). |
+| image + image/openai + image/gemini | optioned `ImageGeneration` interface (per-call options + EditImage/EditImageStreaming) vs upstream's prompt-only `Generation` | **upstreamable feature (large)** | Biggest delta. Propose the edit/optioned surface upstream; until accepted this is the **main long-term fork cost**. |
+| image/openrouter | fork-only module (upstream has no OpenRouter image vendor) | **new contribution OR permanent** | Offer upstream as a new vendor module, else permanent fork-only. |
+
+Net: the cheapest wins (Gemini fixes + message field) retire ~2 modules' delta on
+merge. The image edit/optioned surface is the durable cost. Rebase-on-upstream
+(not merge) keeps each module's delta isolated for these PRs.
