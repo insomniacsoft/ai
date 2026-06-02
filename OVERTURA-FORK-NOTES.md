@@ -51,3 +51,36 @@ is a used correctness fix, so `message` is forked for it.
   Anthropic cache-read pricing handled in overtura's `ModelEntry.CostInputCached`
   (remap to the correct upstream field — see plan U10). Gemini-3.5-Flash model-add
   dropped (now upstream).
+
+## U6 image re-home — reconciliation design (in progress)
+
+Upstream `image` shares most types with the fork already (GenerationResponse/Result/
+Usage, StreamEvent, EventPartialImage/Completed, ErrStreamingNotSupported, the
+helpers). The fork adds: per-call GenerationOptions + option funcs, ErrEditNotSupported,
+and an optioned `ImageGeneration` interface with EditImage/EditImageStreaming.
+
+DONE (committed, additive — does NOT touch the existing optionless `Generation`
+interface, so upstream `image/xai` is unaffected):
+- `image/options.go`: GenerationOptions + all per-call With* funcs + ErrEditNotSupported
+  + ApplyGenerationOptions.
+
+REMAINING (the vendor re-home — the bulk):
+1. `image/editing.go` (new): the optioned `ImageGeneration` interface
+   (GenerateImage/GenerateImageStreaming/EditImage/EditImageStreaming with
+   ...GenerationOption + Model()), the optional client interfaces
+   (EditingImageGenerationClient etc.), and the generic base wrapper
+   `baseImageGeneration[C]` that dispatches edit via type assertion + tracing
+   (re-home from fork image_generation.go, 404 LOC). Keep upstream's `Generation`
+   + WithTracing for xai compatibility.
+2. `image/openai/openai.go`: re-home fork openai.go (462 LOC) — generate + edit via
+   `Images.Edit` (/v1/images/edits) with namedImageReader multipart + image_edit.*
+   streaming event discrimination. Implements the optioned interface.
+3. `image/gemini/gemini.go`: re-home fork gemini.go + gemini_native.go (309 LOC) —
+   native GenerateContent IMAGE generate+edit.
+4. xai: decide — either adapt `image/xai` to the optioned interface, or have the
+   consumer (U9) wrap it (grok-2-image is generate-only → EditImage returns
+   ErrEditNotSupported). Lowest-risk: a thin consumer-side adapter.
+5. Per-vendor construction options (WithAPIKey/WithModel/WithTimeout/WithOpenAIOptions/
+   WithGeminiOptions/WithHTTPClient) move onto each vendor module.
+Then U7 (image/openrouter, new module, from fork openrouter.go 264 LOC) + U8 (tag all,
+ensure each module's go.sum is complete — note xai currently needs `go mod download`).
