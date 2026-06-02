@@ -132,3 +132,35 @@ Co-located with the fork work; distilled into overtura `docs/solutions/` at ship
   upstream → `Gemini31FlashImagePreview`, alias `NanoBanana2`). Now that `model` is
   forked, U9 can either re-add the old alias to the fork OR update the consumer — decide
   at U9. Either way the consumer won't compile against the bare upstream name.
+
+## U8 — tag + publish + GOWORK=off verification → Phase 1 DONE
+- **The GOWORK=off pass IS the load-bearing gate, not ceremony.** go.work (and local
+  `replace => ../`) mask broken cross-module pins. The ONLY way to prove the
+  committed-pin path (what CI + the real consumer use) is a clean-cache, GOWORK=off
+  fetch from the PUBLISHED tags. It immediately caught agent pinning memory v0.1.0
+  while using memory.Tools (a v0.2.0 symbol) — invisible to every local build.
+- **Upstream main's go.mod pins are UNRELIABLE for forking.** main builds as a
+  workspace with `replace => ../` everywhere, so its `require` versions can name
+  versions that DON'T have the symbols main's code uses (memory v0.1.0 vs Tools).
+  When forking a module cut from main, set its unforked-dep requires to the LATEST
+  PUBLISHED TAGS (memory/v0.2.0, embeddings/v0.2.0, schema/v0.2.0), not whatever
+  main's go.mod says — then prove it with GOWORK=off.
+- **External consumers ignore `replace`; they obey `require`.** So each forked
+  module's go.mod must require its forked siblings at the -overtura tag (else fetching
+  image/openai-overtura pulls UPSTREAM image). Keep the `replace => ../` for local dev;
+  bump the requires for publication. Both coexist.
+- **Fork modules keep the upstream module PATH** (`github.com/joakimcarlsson/ai/<m>`).
+  The consumer maps path→fork-repo via per-module `replace => github.com/insomniacsoft/
+  ai/<m> <tag>`. The tag for a subdir module is `<m>/vX.Y.Z-overtura.N` in the repo.
+- **Iterate the published-path check WITHOUT re-pushing** using filesystem-path
+  replaces in a throwaway consumer (`replace <path> => /abs/fork/<m>`): Go uses the
+  fork's CODE but honors its `require` versions for unforked deps (ignoring the fork's
+  own replaces, since replaces apply only to the main module) → fetches unforked deps
+  from upstream exactly as a real consumer would. Lets you fix require pins and
+  re-verify locally, only pushing tags once green.
+- **Broken freshly-pushed tag → supersede, don't move.** agent .1 was broken +
+  unconsumed; deleted it + cut .2 (immutable-tag hygiene; avoids proxy/cache
+  ambiguity). Modules version independently — .2 for agent, .1 for the rest is fine.
+- **go.work in a SHARED worktree is hazardous** — it changes `go` resolution for every
+  session in that dir. Deferred overtura's go.work to U9 (when the consumer actually
+  imports the fork), documented the recipe instead.
