@@ -79,6 +79,32 @@ func TestResponses_UnsetPromptCacheParams(t *testing.T) {
 	}
 }
 
+// TestResponses_UsageSubtractsCachedAndCarriesReasoning verifies usage()
+// subtracts cached input tokens (so they aren't billed at both rates) and
+// carries ReasoningTokens — both consumed by overtura's cost layer.
+func TestResponses_UsageSubtractsCachedAndCarriesReasoning(t *testing.T) {
+	c := &responsesClient{}
+	resp := &responses.Response{}
+	resp.Usage.InputTokens = 100
+	resp.Usage.OutputTokens = 40
+	resp.Usage.InputTokensDetails.CachedTokens = 30
+	resp.Usage.OutputTokensDetails.ReasoningTokens = 12
+
+	u := c.usage(resp)
+	if u.InputTokens != 70 {
+		t.Errorf("InputTokens = %d, want 70 (100 total - 30 cached)", u.InputTokens)
+	}
+	if u.CacheReadTokens != 30 {
+		t.Errorf("CacheReadTokens = %d, want 30", u.CacheReadTokens)
+	}
+	if u.ReasoningTokens != 12 {
+		t.Errorf("ReasoningTokens = %d, want 12", u.ReasoningTokens)
+	}
+	if u.OutputTokens != 40 {
+		t.Errorf("OutputTokens = %d, want 40", u.OutputTokens)
+	}
+}
+
 // TestResponses_ServiceTierTruncationMaxToolCalls verifies the remaining knobs.
 func TestResponses_ServiceTierTruncationMaxToolCalls(t *testing.T) {
 	p := prepResponses(
