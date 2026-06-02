@@ -54,6 +54,12 @@ type Options struct {
 	toolChoice      *llm.ToolChoice
 	builtinTools    []anthropicsdk.ToolUnionParam
 	httpClient      *http.Client
+	// cacheTTL pins the ephemeral cache TTL ("5m" or "1h") on every
+	// CacheControl breakpoint this client emits. Unset uses the API default.
+	cacheTTL CacheTTL
+	// metadataUserID is sent as MessageNewParams.Metadata.UserID when non-empty
+	// (Anthropic abuse-detection signal; overtura passes a salted per-tenant hash).
+	metadataUserID string
 }
 
 // Option configures Options.
@@ -132,6 +138,29 @@ func WithReasoningEffort(effort ReasoningEffort) Option {
 // tools are sent.
 func WithToolChoice(choice llm.ToolChoice) Option {
 	return func(o *Options) { o.toolChoice = &choice }
+}
+
+// CacheTTL selects the ephemeral prompt-cache lifetime for emitted
+// cache_control breakpoints.
+type CacheTTL string
+
+// CacheTTL values.
+const (
+	CacheTTL5m CacheTTL = "5m"
+	CacheTTL1h CacheTTL = "1h"
+)
+
+// WithCacheTTL pins the ephemeral cache TTL ("5m" or "1h") on every CacheControl
+// breakpoint emitted by this client. Unset uses the Anthropic API default (5m).
+func WithCacheTTL(ttl CacheTTL) Option {
+	return func(o *Options) { o.cacheTTL = ttl }
+}
+
+// WithMetadataUserID sets the per-request metadata.user_id field. Overtura passes
+// a salted per-tenant hash so Anthropic abuse-detection can correlate a user
+// without exposing real identity across API customers.
+func WithMetadataUserID(uid string) Option {
+	return func(o *Options) { o.metadataUserID = uid }
 }
 
 // WebSearchConfig configures the Anthropic server-side web_search tool.
@@ -288,6 +317,7 @@ func (c *Client) convertMessages(
 			if cache {
 				content.OfText.CacheControl = anthropicsdk.CacheControlEphemeralParam{
 					Type: "ephemeral",
+					TTL:  c.cacheTTLValue(),
 				}
 			}
 			var contentBlocks []anthropicsdk.ContentBlockParamUnion
@@ -389,6 +419,7 @@ func (c *Client) convertTools(
 		if i == len(tools)-1 && !c.options.disableCache {
 			toolParam.CacheControl = anthropicsdk.CacheControlEphemeralParam{
 				Type: "ephemeral",
+				TTL:  c.cacheTTLValue(),
 			}
 		}
 
@@ -526,11 +557,18 @@ func (c *Client) preparedMessages(
 			if i == len(systemMessages)-1 && !c.options.disableCache {
 				block.CacheControl = anthropicsdk.CacheControlEphemeralParam{
 					Type: "ephemeral",
+					TTL:  c.cacheTTLValue(),
 				}
 			}
 			systemBlocks[i] = block
 		}
 		params.System = systemBlocks
+	}
+
+	if c.options.metadataUserID != "" {
+		params.Metadata = anthropicsdk.MetadataParam{
+			UserID: anthropicsdk.String(c.options.metadataUserID),
+		}
 	}
 
 	return params
@@ -552,6 +590,20 @@ func errorEvent(err error) <-chan llm.Event {
 	eventChan <- llm.Event{Type: types.EventError, Error: err}
 	close(eventChan)
 	return eventChan
+}
+
+// cacheTTLValue returns the SDK TTL constant for the configured cacheTTL option.
+// An unset option yields the zero value, which the SDK omits so the API applies
+// its default (5m) — matching upstream behavior when no TTL is pinned.
+func (c *Client) cacheTTLValue() anthropicsdk.CacheControlEphemeralTTL {
+	switch c.options.cacheTTL {
+	case CacheTTL1h:
+		return anthropicsdk.CacheControlEphemeralTTLTTL1h
+	case CacheTTL5m:
+		return anthropicsdk.CacheControlEphemeralTTLTTL5m
+	default:
+		return ""
+	}
 }
 
 // SendMessages sends a conversation and returns the complete response.
