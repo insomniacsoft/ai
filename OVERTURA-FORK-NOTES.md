@@ -240,3 +240,30 @@ joakimcarlsson/ai repo — NOT yet done; awaiting authorization.**
 Net: the cheapest wins (Gemini fixes + message field) retire ~2 modules' delta on
 merge. The image edit/optioned surface is the durable cost. Rebase-on-upstream
 (not merge) keeps each module's delta isolated for these PRs.
+
+## Sync to upstream release-2026-06-04 (2026-06-09)
+
+Rebased the fork onto `release-2026-06-04` (126 commits since the 2026-05-28 base).
+All modules build + test green against the new release.
+
+**Fork set shrank 11 → 9 modules.** Dropped (now upstreamed):
+- `message` — upstream `message/v0.2.0` ships `ToolCall.ThoughtSignature` (our PR #181
+  merged 2026-06-02). Consumed unforked.
+- `llm/gemini` — PR #181 (tool-result role "user" + thought-signature replay) merged
+  upstream; upstream `llm/gemini/v0.2.4` also adds base64URI parse + multimodel
+  embeddings. Consumed unforked.
+
+**Still forked (9), rebased onto new bases + new -overtura tags:**
+- llm/v0.2.1-overtura.1, llm/anthropic/v0.2.3-overtura.1, llm/openai/v0.3.3-overtura.1,
+  agent/v0.2.2-overtura.1, model/v0.3.0-overtura.3, image/v0.1.0-overtura.2,
+  image/openai/v0.1.0-overtura.2, image/gemini/v0.1.2-overtura.2,
+  image/openrouter/v0.1.0-overtura.2, batch/v0.1.1-overtura.1.
+
+**Absorbed from upstream during the rebase (keep-both 3-way merges):**
+- llm/anthropic: tool-choice support (#183) now coexists with our cache-TTL/metadata.
+- Plus #173 param-handling fix, anthropic temperature/model-id updates, gemini parse
+  fixes — all came in free with the new base.
+- SDKs already matched (openai-go/v3 3.37, anthropic-sdk 1.46, genai 1.58) — no bump.
+
+The obsolete cross-module pin commits (U8) were skipped and re-done against the new
+versions. `image` fork remains the durable cost (upstream still has no EditImage).

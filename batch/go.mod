@@ -8,11 +8,11 @@ require (
 	github.com/anthropics/anthropic-sdk-go v1.46.0
 	github.com/google/uuid v1.6.0
 	github.com/joakimcarlsson/ai/embeddings v0.2.0
-	github.com/joakimcarlsson/ai/llm v0.2.0-overtura.1
-	github.com/joakimcarlsson/ai/message v0.1.0-overtura.1
-	github.com/joakimcarlsson/ai/model v0.3.0-overtura.2
+	github.com/joakimcarlsson/ai/llm v0.2.1-overtura.1
+	github.com/joakimcarlsson/ai/message v0.2.0
+	github.com/joakimcarlsson/ai/model v0.3.0-overtura.3
 	github.com/joakimcarlsson/ai/schema v0.2.0
-	github.com/joakimcarlsson/ai/tool v0.1.0
+	github.com/joakimcarlsson/ai/tool v0.1.1
 	github.com/openai/openai-go v1.12.0
 	google.golang.org/api v0.197.0
 	google.golang.org/genai v1.58.0

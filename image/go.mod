@@ -3,7 +3,7 @@ module github.com/joakimcarlsson/ai/image
 go 1.25.0
 
 require (
-	github.com/joakimcarlsson/ai/model v0.1.0
+	github.com/joakimcarlsson/ai/model v0.3.0-overtura.3
 	github.com/joakimcarlsson/ai/tracing v0.1.0
 )
 
