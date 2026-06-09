@@ -47,12 +47,6 @@ const (
 
 	GPTImage15 ID = "gpt-image-1.5"
 	GPTImage2  ID = "gpt-image-2"
-
-	// [OVERTURA FORK] gpt-image-1 / gpt-image-1-mini — upstream model/v0.3.0
-	// dropped these in favor of 1.5/2, but overtura still offers them (seeded
-	// in catalog_seed.json). Re-homed to preserve the product offering (U10).
-	GPTImage1     ID = "gpt-image-1"
-	GPTImage1Mini ID = "gpt-image-1-mini"
 )
 
 // OpenAIModels maps OpenAI chat model IDs to their configurations.
@@ -635,41 +629,6 @@ var OpenAIEmbeddingModels = map[ID]EmbeddingModel{
 
 // OpenAIImageGenerationModels maps OpenAI image generation model IDs to their configurations.
 var OpenAIImageGenerationModels = map[ID]ImageGenerationModel{
-	// [OVERTURA FORK] gpt-image-1 / gpt-image-1-mini — re-homed (see ID consts).
-	GPTImage1: {
-		ID:       GPTImage1,
-		Name:     "GPT Image 1",
-		Provider: ProviderOpenAI,
-		APIModel: "gpt-image-1",
-		Pricing: map[string]map[string]float64{
-			"1024x1024": {"low": 0.011, "medium": 0.042, "high": 0.167},
-			"1024x1536": {"low": 0.016, "medium": 0.063, "high": 0.25},
-			"1536x1024": {"low": 0.016, "medium": 0.063, "high": 0.25},
-		},
-		MaxPromptTokens:    4000,
-		SupportedSizes:     []string{"1024x1024", "1024x1536", "1536x1024"},
-		DefaultSize:        "1024x1024",
-		SupportedQualities: []string{"low", "medium", "high"},
-		DefaultQuality:     "medium",
-		SupportsStreaming:  true,
-	},
-	GPTImage1Mini: {
-		ID:       GPTImage1Mini,
-		Name:     "GPT Image 1 Mini",
-		Provider: ProviderOpenAI,
-		APIModel: "gpt-image-1-mini",
-		Pricing: map[string]map[string]float64{
-			"1024x1024": {"low": 0.005, "medium": 0.011, "high": 0.036},
-			"1024x1536": {"low": 0.006, "medium": 0.015, "high": 0.052},
-			"1536x1024": {"low": 0.006, "medium": 0.015, "high": 0.052},
-		},
-		MaxPromptTokens:    4000,
-		SupportedSizes:     []string{"1024x1024", "1024x1536", "1536x1024"},
-		DefaultSize:        "1024x1024",
-		SupportedQualities: []string{"low", "medium", "high"},
-		DefaultQuality:     "medium",
-		SupportsStreaming:  true,
-	},
 	GPTImage15: {
 		ID:       GPTImage15,
 		Name:     "GPT Image 1.5",
