@@ -267,3 +267,17 @@ All modules build + test green against the new release.
 
 The obsolete cross-module pin commits (U8) were skipped and re-done against the new
 versions. `image` fork remains the durable cost (upstream still has no EditImage).
+
+## Upstream PR status (2026-06-09)
+
+Merged to upstream main (await a release tag to consume):
+- #181 — Gemini tool-role + thought-signature (already consumed; un-forked message + llm/gemini at the 2026-06-04 sync).
+- #186 — ProviderResponseID on llm.Response + agent.ChatResponse. **When upstream
+  next tags an `agent` release carrying this, `agent` UN-FORKS** (it's forked only
+  for ProviderResponseID). `llm`/`llm/openai` also gain it but stay forked for their
+  other patches (Responses options, per-tier TokenUsage).
+- #187 — batch/gemini schema converter recursion (array items + nested objects).
+  Our single-package batch converter fix becomes redundant with upstream's once
+  aligned.
+
+Next-sync action: drop `agent` from the fork set once a release tag includes #186.
