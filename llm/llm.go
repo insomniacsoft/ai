@@ -173,6 +173,9 @@ type LLM interface {
 	) (*Response, error)
 
 	// StreamResponse sends a conversation and returns a channel of streaming events.
+	//
+	// Callers that stop reading before the channel closes MUST cancel ctx;
+	// cancellation is what releases the stream's internal goroutines.
 	StreamResponse(
 		ctx context.Context,
 		messages []message.Message,
@@ -180,6 +183,9 @@ type LLM interface {
 	) <-chan Event
 
 	// StreamResponseWithStructuredOutput streams a response with structured output constraints.
+	//
+	// Callers that stop reading before the channel closes MUST cancel ctx;
+	// cancellation is what releases the stream's internal goroutines.
 	StreamResponseWithStructuredOutput(
 		ctx context.Context,
 		messages []message.Message,
@@ -425,7 +431,17 @@ func (t *tracingLLM) StreamResponse(
 				tracing.SetError(span, evt.Error)
 				t.recordMetrics(ctx, start, nil, evt.Error)
 			}
-			outCh <- evt
+			select {
+			case outCh <- evt:
+			case <-ctx.Done():
+				// The consumer abandoned outCh. Drain innerCh so the
+				// producer's blocking sends unblock and it can close the
+				// channel, then return so the span ends instead of leaking
+				// with this goroutine.
+				for range innerCh {
+				}
+				return
+			}
 		}
 	}()
 	return outCh
@@ -469,7 +485,17 @@ func (t *tracingLLM) StreamResponseWithStructuredOutput(
 				tracing.SetError(span, evt.Error)
 				t.recordMetrics(ctx, start, nil, evt.Error)
 			}
-			outCh <- evt
+			select {
+			case outCh <- evt:
+			case <-ctx.Done():
+				// The consumer abandoned outCh. Drain innerCh so the
+				// producer's blocking sends unblock and it can close the
+				// channel, then return so the span ends instead of leaking
+				// with this goroutine.
+				for range innerCh {
+				}
+				return
+			}
 		}
 	}()
 	return outCh
