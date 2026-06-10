@@ -281,3 +281,32 @@ Merged to upstream main (await a release tag to consume):
   aligned.
 
 Next-sync action: drop `agent` from the fork set once a release tag includes #186.
+
+## Stream-abandonment leak fix (2026-06-10) — llm/v0.2.1-overtura.2, llm/openai/v0.3.3-overtura.2
+
+The `WithTracing` stream forwarders (`StreamResponse` + structured-output variant)
+sent with a bare `outCh <- evt` on an unbuffered channel. A consumer that stopped
+reading after the first error event stranded the forwarder forever — goroutine leak
+and its tracing span never ended. Aggravated by a double error emission in
+llm/openai's runStream ("no response choices" emitted into the channel AND returned,
+after which ExecuteStreamWithRetry emitted the same error again), so error-and-return
+consumers always hit it. Overtura worked around it with drain-before-return at five
+call sites (theme_labeler, vision/describe, bkt consolidator/lint_llm_runner/
+indexer_assets) — those drains stay (harmless) but are no longer load-bearing.
+
+Fix (both upstreamable correctness fixes, add to the next PR batch):
+- `llm`: forwarders now `select` on `ctx.Done()`; on cancellation they drain the
+  inner channel (unblocking the producer's bare sends) and return, ending the span.
+  Contract documented on the LLM interface: callers that stop reading before the
+  channel closes MUST cancel ctx. Regression tests (dependency-free, no goleak —
+  a goleak require in llm/go.mod would pollute every consumer's module graph):
+  llm/stream_abandon_overtura_test.go.
+- `llm/openai`: runStream returns the no-choices error without emitting it;
+  ExecuteStreamWithRetry owns error emission (exactly once). Audit confirmed no
+  other vendor emits-and-returns; remaining EventError sends are pre-flight
+  buffered(1)+closed channels, which cannot block. Test:
+  llm/openai/stream_error_overtura_test.go.
+
+NOTE: upstream-layout `main` (monolith providers/llm.go:625-663 + openai.go:453 +
+retry.go) carries the same bug — port these fixes onto main before the next
+upstream PR batch.
