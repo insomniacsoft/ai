@@ -125,21 +125,52 @@ func (g *nativeClient) GenerateImage(
 	return g.mapResponse(resp)
 }
 
-// EditImage edits an existing image. The source image is provided through
-// [image.WithInputImage].
+// buildEditParts assembles the Gemini request parts for an edit: one inline
+// image part per source image, followed by the text prompt. The multi-reference
+// InputImages is preferred (each entry becomes its own part — Gemini accepts
+// multiple inline images), with the single InputImage as the fallback. Returns
+// an error when no source image is supplied or one has an unsupported type.
+//
+// Honoring InputImages is the fix for references being silently dropped: the
+// caller's WithInputImages (the media_ids path) populated only the plural
+// field, which the old singular-only path ignored — so every reference edit,
+// even a single logo, failed with "input image required for editing".
+func buildEditParts(prompt string, opts image.GenerationOptions) ([]*genai.Part, error) {
+	inputs := opts.InputImages
+	if len(inputs) == 0 && len(opts.InputImage) > 0 {
+		inputs = [][]byte{opts.InputImage}
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data) or WithInputImages([][]byte)")
+	}
+
+	parts := make([]*genai.Part, 0, len(inputs)+1)
+	for i, img := range inputs {
+		mimeType := detectImageMIME(img)
+		if !isAllowedImageMIME(mimeType) {
+			return nil, fmt.Errorf("unsupported image type for reference image %d: %s", i, mimeType)
+		}
+		parts = append(parts, &genai.Part{InlineData: &genai.Blob{MIMEType: mimeType, Data: img}})
+	}
+	parts = append(parts, &genai.Part{Text: prompt})
+	return parts, nil
+}
+
+// EditImage edits an existing image. Source images are provided through
+// [image.WithInputImage] (single) or [image.WithInputImages] (multi-reference
+// blend). Gemini's GenerateContent natively accepts multiple inline image
+// parts, so every reference is forwarded — a caller that passed the
+// multi-reference path must not have it silently dropped.
 func (g *nativeClient) EditImage(
 	ctx context.Context,
 	prompt string,
 	options ...image.GenerationOption,
 ) (*image.GenerationResponse, error) {
 	opts := image.ApplyGenerationOptionsWithModelDefaults(g.options.model, "b64_json", options...)
-	if len(opts.InputImage) == 0 {
-		return nil, fmt.Errorf("input image required for editing: use WithInputImage(data)")
-	}
 
-	mimeType := detectImageMIME(opts.InputImage)
-	if !isAllowedImageMIME(mimeType) {
-		return nil, fmt.Errorf("unsupported image type: %s", mimeType)
+	parts, err := buildEditParts(prompt, opts)
+	if err != nil {
+		return nil, err
 	}
 
 	config := &genai.GenerateContentConfig{
@@ -147,11 +178,8 @@ func (g *nativeClient) EditImage(
 		ImageConfig:        geminiImageConfig(opts),
 	}
 	contents := []*genai.Content{{
-		Role: genai.RoleUser,
-		Parts: []*genai.Part{
-			{InlineData: &genai.Blob{MIMEType: mimeType, Data: opts.InputImage}},
-			{Text: prompt},
-		},
+		Role:  genai.RoleUser,
+		Parts: parts,
 	}}
 
 	ctx, cancel := g.withTimeout(ctx)
