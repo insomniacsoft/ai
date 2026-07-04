@@ -803,16 +803,148 @@ func (c *Client) usage(msg anthropicsdk.Message) llm.TokenUsage {
 func (c *Client) buildOutputConfig(
 	outputSchema *schema.StructuredOutputInfo,
 ) anthropicsdk.OutputConfigParam {
+	// Anthropic's structured output caps a schema at 16 union-typed (nullable/anyOf) parameters.
+	// The shared schema generator emits OpenAI-strict form — every field in `required`, optionals
+	// expressed as nullable unions ["T","null"] — which blows past that cap on large honesty-first
+	// schemas (many nullable pointers modeling "unknown"). Rewrite to STANDARD optionality here:
+	// drop "null" from the type and omit the field from `required`. That is semantically identical
+	// for the caller (an omitted field decodes exactly like an explicit null) but carries ZERO union
+	// params. Deep copy — the caller's StructuredOutputInfo is shared with the OpenAI/Gemini paths,
+	// which DO want the strict form, so it must never be mutated in place.
+	properties, required := relaxNullableUnions(outputSchema.Parameters, outputSchema.Required)
+
 	schemaMap := map[string]any{
 		"type":                 "object",
-		"properties":           outputSchema.Parameters,
+		"properties":           properties,
 		"additionalProperties": false,
 	}
-	if len(outputSchema.Required) > 0 {
-		schemaMap["required"] = outputSchema.Required
+	if len(required) > 0 {
+		schemaMap["required"] = required
 	}
 	return anthropicsdk.OutputConfigParam{
 		Format: anthropicsdk.JSONOutputFormatParam{Schema: schemaMap},
+	}
+}
+
+// relaxNullableUnions deep-copies an OpenAI-strict property set (every field in `required`, optionals
+// expressed as nullable unions ["T","null"]) into Anthropic's accepted STANDARD-optionality form: a
+// nullable field drops "null" from its type and is removed from `required`. It recurses through nested
+// objects (a property's own "properties"/"required") and array-of-object items ("items.properties"/
+// "items.required") so the whole tree is relaxed. The input maps and slices are never mutated.
+//
+// Safe for the caller: an optional field the model omits decodes to a zero/nil target — the same result
+// an explicit JSON null gives — so nothing downstream changes. What changes is only the WIRE schema
+// Anthropic validates: standard optionality carries zero union-typed params, clearing the 16-union limit
+// the strict form violates.
+func relaxNullableUnions(properties map[string]any, required []string) (map[string]any, []string) {
+	if properties == nil {
+		return nil, required
+	}
+	out := make(map[string]any, len(properties))
+	nullable := make(map[string]bool) // fields whose type carried "null" — to be dropped from `required`
+
+	for name, raw := range properties {
+		prop, ok := raw.(map[string]any)
+		if !ok {
+			out[name] = raw
+			continue
+		}
+		cp := make(map[string]any, len(prop))
+		for k, v := range prop {
+			cp[k] = v
+		}
+		if base, wasNullable := denull(cp["type"]); wasNullable {
+			cp["type"] = base
+			nullable[name] = true
+		}
+		if nested, ok := cp["properties"].(map[string]any); ok { // nested object
+			np, nr := relaxNullableUnions(nested, asStrings(cp["required"]))
+			cp["properties"] = np
+			setRequired(cp, nr)
+		}
+		if items, ok := cp["items"].(map[string]any); ok { // array-of-object items
+			ic := make(map[string]any, len(items))
+			for k, v := range items {
+				ic[k] = v
+			}
+			if itemProps, ok := ic["properties"].(map[string]any); ok {
+				ip, ir := relaxNullableUnions(itemProps, asStrings(ic["required"]))
+				ic["properties"] = ip
+				setRequired(ic, ir)
+			}
+			cp["items"] = ic
+		}
+		out[name] = cp
+	}
+
+	kept := make([]string, 0, len(required))
+	for _, name := range required { // preserve order; drop the now-optional fields
+		if !nullable[name] {
+			kept = append(kept, name)
+		}
+	}
+	return out, kept
+}
+
+// setRequired writes a non-empty required list onto a schema node, or removes the key entirely when
+// every field became optional (an empty "required":[] is noise, not a constraint).
+func setRequired(node map[string]any, required []string) {
+	if len(required) > 0 {
+		node["required"] = required
+	} else {
+		delete(node, "required")
+	}
+}
+
+// denull collapses a nullable-union type (["T","null"], in either []string or []any form) to its single
+// non-null base type. Returns (base, true) when a "null" member was present; (original, false) otherwise.
+// A genuine multi-type union with no "null" is left untouched.
+func denull(t any) (any, bool) {
+	var elems []any
+	switch v := t.(type) {
+	case []string:
+		for _, s := range v {
+			elems = append(elems, s)
+		}
+	case []any:
+		elems = v
+	default:
+		return t, false
+	}
+	hasNull := false
+	base := make([]any, 0, len(elems))
+	for _, e := range elems {
+		if s, ok := e.(string); ok && s == "null" {
+			hasNull = true
+			continue
+		}
+		base = append(base, e)
+	}
+	if !hasNull {
+		return t, false
+	}
+	if len(base) == 1 {
+		return base[0], true
+	}
+	return base, true // a real union minus its null member — still free of "null"
+}
+
+// asStrings coerces a required-list value (normally []string from the generator, []any after a JSON
+// round-trip) to []string; anything else yields nil.
+func asStrings(v any) []string {
+	switch s := v.(type) {
+	case []string:
+		return s
+	case []any:
+		out := make([]string, 0, len(s))
+		for _, e := range s {
+			if str, ok := e.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 
