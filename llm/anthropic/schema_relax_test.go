@@ -5,6 +5,73 @@ import (
 	"testing"
 )
 
+// A repeated object type (the same shape used at several sites, differing only in per-site description)
+// must be hoisted into a single shared $def and referenced by $ref everywhere — the descriptions kept at
+// the ref sites. This is what collapses the optional-parameter count under Anthropic's 24 cap.
+func TestFactorSharedObjectDefs_HoistsRepeatedTypes(t *testing.T) {
+	duration := func(desc string) map[string]any {
+		return map[string]any{
+			"type":        "object",
+			"description": desc,
+			"properties": map[string]any{
+				"canonical": map[string]any{"type": "number"},
+				"display":   map[string]any{"type": "string"},
+			},
+			"required":             []string{"display"},
+			"additionalProperties": false,
+		}
+	}
+	props := map[string]any{
+		"title":      map[string]any{"type": "string"},
+		"prep_time":  duration("prep"),
+		"cook_time":  duration("cook"),
+		"total_time": duration("total"),
+		"steps": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type":                 "object",
+				"properties":           map[string]any{"timer": duration("step timer")},
+				"required":             []string{},
+				"additionalProperties": false,
+			},
+		},
+	}
+
+	defs, out := factorSharedObjectDefs(props)
+
+	if len(defs) != 1 {
+		t.Fatalf("defs = %d, want exactly 1 shared duration def", len(defs))
+	}
+	for field, wantDesc := range map[string]string{"prep_time": "prep", "cook_time": "cook", "total_time": "total"} {
+		ref, ok := out[field].(map[string]any)
+		if !ok || ref["$ref"] == nil {
+			t.Errorf("%s = %v, want a $ref", field, out[field])
+			continue
+		}
+		if ref["description"] != wantDesc {
+			t.Errorf("%s description = %v, want %q preserved at the ref site", field, ref["description"], wantDesc)
+		}
+	}
+	var def map[string]any
+	for _, d := range defs {
+		def = d.(map[string]any)
+	}
+	if _, has := def["description"]; has {
+		t.Error("shared def body must not carry a per-site description")
+	}
+	if _, ok := def["properties"].(map[string]any)["canonical"]; !ok {
+		t.Error("shared def lost the duration properties")
+	}
+	stepItems := out["steps"].(map[string]any)["items"].(map[string]any)
+	timer, ok := stepItems["properties"].(map[string]any)["timer"].(map[string]any)
+	if !ok || timer["$ref"] == nil {
+		t.Errorf("step timer = %v, want a $ref to the shared duration", stepItems["properties"])
+	}
+	if out["title"].(map[string]any)["type"] != "string" {
+		t.Error("unshared scalar field should stay inline")
+	}
+}
+
 // strictSchema mimics what the shared schema generator emits: every field in `required`, optionals as
 // nullable unions ["T","null"], including a nullable nested object and array-of-object items that carry
 // their own nullable fields. relaxNullableUnions must turn this into standard optionality with no "null"
