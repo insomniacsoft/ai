@@ -9,7 +9,7 @@ import (
 
 	"github.com/joakimcarlsson/ai/image"
 	"github.com/joakimcarlsson/ai/model"
-	openaisdk "github.com/openai/openai-go"
+	openaisdk "github.com/openai/openai-go/v3"
 )
 
 // EditImage modifies an existing image via /v1/images/edits. The source image is
