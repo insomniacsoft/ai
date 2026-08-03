@@ -105,6 +105,20 @@ func (p *VertexGCSProcessor) Close() error { return p.store.Close() }
 // Submit builds the input JSONL, uploads it to GCS, and creates a Vertex batch
 // job. It returns immediately with a handle — it does NOT wait for completion.
 func (p *VertexGCSProcessor) Submit(ctx context.Context, requests []Request) (*VertexBatchHandle, error) {
+	return p.SubmitWithModel(ctx, p.cfg.Model, requests)
+}
+
+// SubmitWithModel is Submit with a per-job model override. This lets callers
+// resolve a live model policy immediately before submission while retaining
+// the configured model as the backwards-compatible default for Submit.
+func (p *VertexGCSProcessor) SubmitWithModel(
+	ctx context.Context,
+	model string,
+	requests []Request,
+) (*VertexBatchHandle, error) {
+	if model == "" {
+		return nil, fmt.Errorf("batch: vertex gcs submit: model is required")
+	}
 	if len(requests) == 0 {
 		return nil, fmt.Errorf("batch: vertex gcs submit: no requests")
 	}
@@ -136,7 +150,7 @@ func (p *VertexGCSProcessor) Submit(ctx context.Context, requests []Request) (*V
 		return nil, fmt.Errorf("batch: vertex gcs upload close: %w", err)
 	}
 
-	job, err := p.genai.Batches.Create(ctx, p.cfg.Model,
+	job, err := p.genai.Batches.Create(ctx, model,
 		&genai.BatchJobSource{
 			Format: "jsonl",
 			GCSURI: []string{fmt.Sprintf("gs://%s/%s", p.cfg.Bucket, inputObj)},

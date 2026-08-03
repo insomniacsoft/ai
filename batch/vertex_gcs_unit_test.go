@@ -1,6 +1,7 @@
 package batch
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -8,6 +9,14 @@ import (
 	"github.com/joakimcarlsson/ai/message"
 	"github.com/joakimcarlsson/ai/schema"
 )
+
+func TestSubmitWithModelRejectsEmptyModel(t *testing.T) {
+	p := &VertexGCSProcessor{}
+	_, err := p.SubmitWithModel(context.Background(), "", []Request{{ID: "rec-1"}})
+	if err == nil || !strings.Contains(err.Error(), "model is required") {
+		t.Fatalf("SubmitWithModel error = %v, want model is required", err)
+	}
+}
 
 // TestBuildJSONLLine_MarkerAndSchema verifies the Vertex input line carries the
 // correlation marker on the user part and a well-formed responseSchema (array

@@ -388,7 +388,7 @@ The fork therefore keeps its implementation and tests while adopting upstream's
 larger model registry. Compatibility aliases/entries preserve Overtura's six
 existing image descriptor ids and their image-only `OutputModalities` metadata.
 
-Planned publication tags:
+Published tags:
 
 - `llm/v0.5.3-overtura.1`
 - `llm/openai/v0.4.8-overtura.1`
@@ -399,6 +399,11 @@ Planned publication tags:
 - `image/openai/v0.2.2-overtura.1`
 - `image/gemini/v0.1.7-overtura.1`
 - `image/openrouter/v0.1.0-overtura.3`
-- `batch/v0.1.8-overtura.1`
+- `batch/v0.1.8-overtura.2` (`.1` is superseded)
+
+The `.2` batch tag adds `VertexGCSProcessor.SubmitWithModel`, allowing a
+caller to pass the model resolved for each job while `Submit` retains the
+configured default for backwards compatibility. This keeps live model-policy
+selection aligned with the exact Vertex API model used for execution.
 
 `agent` remains unforked and moves directly to upstream `agent/v0.5.2`.
