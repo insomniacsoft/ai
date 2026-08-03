@@ -394,7 +394,7 @@ Published tags:
 - `llm/openai/v0.4.8-overtura.1`
 - `llm/anthropic/v0.3.8-overtura.1`
 - `llm/gemini/v0.3.7-overtura.1`
-- `model/v0.8.0-overtura.1`
+- `model/v0.8.0-overtura.2` (`.1` is superseded)
 - `image/v0.2.0-overtura.1`
 - `image/openai/v0.2.2-overtura.1`
 - `image/gemini/v0.1.7-overtura.1`
@@ -405,5 +405,9 @@ The `.2` batch tag adds `VertexGCSProcessor.SubmitWithModel`, allowing a
 caller to pass the model resolved for each job while `Submit` retains the
 configured default for backwards compatibility. This keeps live model-policy
 selection aligned with the exact Vertex API model used for execution.
+
+The `.2` model tag restores Overtura's verified tier pricing, aspect ratios,
+and 1K defaults for its six legacy OpenRouter FLUX/Riverflow entries. Upstream's
+expanded catalog otherwise replaced those fork-specific fields during rebase.
 
 `agent` remains unforked and moves directly to upstream `agent/v0.5.2`.

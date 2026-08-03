@@ -911,12 +911,22 @@ const (
 // per-image figure would be worse than none. Read usage.Cost off the response
 // for what a request actually cost.
 //
-// DefaultSize is deliberately left empty across these entries. SupportedSizes
-// records the resolution enum a model advertises, but advertising a tier is not
-// the same as accepting it: seedream-4.5 lists 1K, 2K and 4K yet rejects both 1K
-// and 2K at 16:9 with "requires at least 3,686,400 output pixels". Omitting
-// resolution lets OpenRouter apply the model's real default, which is the only
-// value verified to work for every entry here.
+// DefaultSize is generally left empty because advertised tiers are not always
+// accepted for every aspect ratio. Overtura's six legacy FLUX/Riverflow entries
+// are the exception: their verified tier defaults and pricing are retained for
+// backwards-compatible request validation and usage accounting.
+func overturaTieredImagePricing(ratios []string, oneK, twoK, fourK float64) map[string]map[string]float64 {
+	pricing := make(map[string]map[string]float64, len(ratios))
+	for _, ratio := range ratios {
+		tiers := map[string]float64{"1K": oneK, "2K": twoK}
+		if fourK > 0 {
+			tiers["4K"] = fourK
+		}
+		pricing[ratio] = tiers
+	}
+	return pricing
+}
+
 var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 	OpenRouterGPTImage2: {
 		ID:              OpenRouterGPTImage2,
@@ -1076,63 +1086,83 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultQuality:     "default",
 	},
 	OpenRouterFlux2Pro: {
-		ID:              OpenRouterFlux2Pro,
-		Name:            "OpenRouter – FLUX.2 Pro",
-		Provider:        ProviderOpenRouter,
-		APIModel:        "black-forest-labs/flux.2-pro",
+		ID:       OpenRouterFlux2Pro,
+		Name:     "OpenRouter – FLUX.2 Pro",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-pro",
+		Pricing: overturaTieredImagePricing(
+			[]string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+			0.0075, 0.03, 0.12,
+		),
 		MaxPromptTokens: 4000,
 		SupportedAspectRatios: []string{
-			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9",
-			"auto",
+			"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9",
 		},
 		DefaultAspectRatio: "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedSizes:     []string{"1K", "2K", "4K"},
+		DefaultSize:        "1K",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Max: {
-		ID:              OpenRouterFlux2Max,
-		Name:            "OpenRouter – FLUX.2 Max",
-		Provider:        ProviderOpenRouter,
-		APIModel:        "black-forest-labs/flux.2-max",
+		ID:       OpenRouterFlux2Max,
+		Name:     "OpenRouter – FLUX.2 Max",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-max",
+		Pricing: overturaTieredImagePricing(
+			[]string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+			0.018, 0.07, 0.28,
+		),
 		MaxPromptTokens: 4000,
 		SupportedAspectRatios: []string{
-			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9",
-			"auto",
+			"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9",
 		},
 		DefaultAspectRatio: "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedSizes:     []string{"1K", "2K", "4K"},
+		DefaultSize:        "1K",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Flex: {
-		ID:              OpenRouterFlux2Flex,
-		Name:            "OpenRouter – FLUX.2 Flex",
-		Provider:        ProviderOpenRouter,
-		APIModel:        "black-forest-labs/flux.2-flex",
+		ID:       OpenRouterFlux2Flex,
+		Name:     "OpenRouter – FLUX.2 Flex",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-flex",
+		Pricing: overturaTieredImagePricing(
+			[]string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+			0.015, 0.06, 0.24,
+		),
 		MaxPromptTokens: 4000,
 		SupportedAspectRatios: []string{
-			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9",
-			"auto",
+			"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9",
 		},
 		DefaultAspectRatio: "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedSizes:     []string{"1K", "2K", "4K"},
+		DefaultSize:        "1K",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Klein4B: {
-		ID:              OpenRouterFlux2Klein4B,
-		Name:            "OpenRouter – FLUX.2 Klein 4B",
-		Provider:        ProviderOpenRouter,
-		APIModel:        "black-forest-labs/flux.2-klein-4b",
+		ID:       OpenRouterFlux2Klein4B,
+		Name:     "OpenRouter – FLUX.2 Klein 4B",
+		Provider: ProviderOpenRouter,
+		APIModel: "black-forest-labs/flux.2-klein-4b",
+		Pricing: overturaTieredImagePricing(
+			[]string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4"},
+			0.0035, 0.014, 0.056,
+		),
 		MaxPromptTokens: 4000,
 		SupportedAspectRatios: []string{
-			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9",
-			"auto",
+			"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4",
 		},
 		DefaultAspectRatio: "1:1",
-		SupportedQualities: []string{"default"},
-		DefaultQuality:     "default",
+		SupportedSizes:     []string{"1K", "2K", "4K"},
+		DefaultSize:        "1K",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
 		OutputModalities:   []string{"image"},
 	},
 	OpenRouterGrokImagineImageQuality: {
@@ -1174,13 +1204,17 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultQuality:        "default",
 	},
 	OpenRouterRiverflowV2Pro: {
-		ID:              OpenRouterRiverflowV2Pro,
-		Name:            "OpenRouter – Riverflow V2 Pro",
-		Provider:        ProviderOpenRouter,
-		APIModel:        "sourceful/riverflow-v2-pro",
+		ID:       OpenRouterRiverflowV2Pro,
+		Name:     "OpenRouter – Riverflow V2 Pro",
+		Provider: ProviderOpenRouter,
+		APIModel: "sourceful/riverflow-v2-pro",
+		Pricing: overturaTieredImagePricing(
+			[]string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9"},
+			0.037, 0.037, 0.59,
+		),
 		MaxPromptTokens: 4000,
 		SupportedAspectRatios: []string{
-			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9",
+			"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4", "21:9",
 		},
 		DefaultAspectRatio: "1:1",
 		SupportedSizes:     []string{"1K", "2K", "4K"},
@@ -1190,13 +1224,17 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		OutputModalities:   []string{"image"},
 	},
 	OpenRouterRiverflowV2Fast: {
-		ID:              OpenRouterRiverflowV2Fast,
-		Name:            "OpenRouter – Riverflow V2 Fast",
-		Provider:        ProviderOpenRouter,
-		APIModel:        "sourceful/riverflow-v2-fast",
+		ID:       OpenRouterRiverflowV2Fast,
+		Name:     "OpenRouter – Riverflow V2 Fast",
+		Provider: ProviderOpenRouter,
+		APIModel: "sourceful/riverflow-v2-fast",
+		Pricing: overturaTieredImagePricing(
+			[]string{"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4"},
+			0.0049, 0.020, 0,
+		),
 		MaxPromptTokens: 4000,
 		SupportedAspectRatios: []string{
-			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16",
+			"1:1", "16:9", "9:16", "4:3", "3:4", "4:5", "5:4",
 		},
 		DefaultAspectRatio: "1:1",
 		SupportedSizes:     []string{"1K", "2K"},
