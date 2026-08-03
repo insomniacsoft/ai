@@ -367,3 +367,38 @@ Local gate: all 12 modules `go build ./...` + `go test ./...` (non-live) GREEN.
 Cross-module require re-pin + per-module `-overtura.1` tags + GOWORK=off published-
 tag verification + consumer (`server/go.mod`) re-pin are the outward-facing publish
 steps — gated on user authorization (unchanged policy).
+
+## Sync to upstream release-2026-07-31 (2026-08-03)
+
+Rebased the reviewed July resync branch from `release-2026-07-02` onto the current
+upstream release, `release-2026-07-31` (`49877cc`). The corresponding current
+module bases are `llm/v0.5.3`, `llm/openai/v0.4.8`,
+`llm/anthropic/v0.3.8`, `llm/gemini/v0.3.7`, `model/v0.8.0`,
+`image/v0.2.0`, `image/openai/v0.2.2`, `image/gemini/v0.1.7`,
+`image/openrouter/v0.1.0`, and `batch/v0.1.8`.
+
+Upstream `model/v0.8.0` adds the GA `gemini-3.5-flash-lite` and
+`vertexai.gemini-3.5-flash-lite` catalog entries. The fork corrects the model's
+cached-input rate to the published `$0.03 / 1M` standard rate and covers the
+API id plus standard pricing with a regression test.
+
+The OpenRouter image module now exists upstream, but its configure-once
+`Generation` API is incompatible with Overtura's optioned generate/edit API.
+The fork therefore keeps its implementation and tests while adopting upstream's
+larger model registry. Compatibility aliases/entries preserve Overtura's six
+existing image descriptor ids and their image-only `OutputModalities` metadata.
+
+Planned publication tags:
+
+- `llm/v0.5.3-overtura.1`
+- `llm/openai/v0.4.8-overtura.1`
+- `llm/anthropic/v0.3.8-overtura.1`
+- `llm/gemini/v0.3.7-overtura.1`
+- `model/v0.8.0-overtura.1`
+- `image/v0.2.0-overtura.1`
+- `image/openai/v0.2.2-overtura.1`
+- `image/gemini/v0.1.7-overtura.1`
+- `image/openrouter/v0.1.0-overtura.3`
+- `batch/v0.1.8-overtura.1`
+
+`agent` remains unforked and moves directly to upstream `agent/v0.5.2`.

@@ -83,7 +83,7 @@ var GeminiModels = map[ID]Model{
 		Provider:              ProviderGemini,
 		APIModel:              "gemini-3.5-flash-lite",
 		CostPer1MIn:           0.30,
-		CostPer1MInCached:     0,
+		CostPer1MInCached:     0.03,
 		CostPer1MOutCached:    0,
 		CostPer1MOut:          2.50,
 		ContextWindow:         1048576,

@@ -859,24 +859,28 @@ var OpenRouterModels = map[ID]Model{
 
 // OpenRouter image generation model IDs.
 const (
-	OpenRouterGPTImage2               ID = "openrouter.gpt-image-2"
-	OpenRouterGPTImage1               ID = "openrouter.gpt-image-1"
-	OpenRouterGPTImage1Mini           ID = "openrouter.gpt-image-1-mini"
-	OpenRouterGPT5Image               ID = "openrouter.gpt-5-image"
-	OpenRouterGPT5ImageMini           ID = "openrouter.gpt-5-image-mini"
-	OpenRouterGPT54Image2             ID = "openrouter.gpt-5.4-image-2"
-	OpenRouterGemini25FlashImage      ID = "openrouter.gemini-2.5-flash-image"
-	OpenRouterGemini3ProImage         ID = "openrouter.gemini-3-pro-image"
-	OpenRouterGemini31FlashImage      ID = "openrouter.gemini-3.1-flash-image"
-	OpenRouterGemini31FlashLiteImage  ID = "openrouter.gemini-3.1-flash-lite-image"
-	OpenRouterSeedream45              ID = "openrouter.seedream-4.5"
-	OpenRouterFlux2Pro                ID = "openrouter.flux.2-pro"
-	OpenRouterFlux2Max                ID = "openrouter.flux.2-max"
-	OpenRouterFlux2Flex               ID = "openrouter.flux.2-flex"
-	OpenRouterFlux2Klein4B            ID = "openrouter.flux.2-klein-4b"
+	OpenRouterGPTImage2              ID = "openrouter.gpt-image-2"
+	OpenRouterGPTImage1              ID = "openrouter.gpt-image-1"
+	OpenRouterGPTImage1Mini          ID = "openrouter.gpt-image-1-mini"
+	OpenRouterGPT5Image              ID = "openrouter.gpt-5-image"
+	OpenRouterGPT5ImageMini          ID = "openrouter.gpt-5-image-mini"
+	OpenRouterGPT54Image2            ID = "openrouter.gpt-5.4-image-2"
+	OpenRouterGemini25FlashImage     ID = "openrouter.gemini-2.5-flash-image"
+	OpenRouterGemini3ProImage        ID = "openrouter.gemini-3-pro-image"
+	OpenRouterGemini31FlashImage     ID = "openrouter.gemini-3.1-flash-image"
+	OpenRouterGemini31FlashLiteImage ID = "openrouter.gemini-3.1-flash-lite-image"
+	OpenRouterSeedream45             ID = "openrouter.seedream-4.5"
+	OpenRouterFlux2Pro               ID = "openrouter.flux.2-pro"
+	OpenRouterFlux2Max               ID = "openrouter.flux.2-max"
+	OpenRouterFlux2Flex              ID = "openrouter.flux.2-flex"
+	OpenRouterFlux2Klein4B           ID = "openrouter.flux.2-klein-4b"
+	// OpenRouterFlux2Klein is Overtura's compatibility name for the hosted 4B model.
+	OpenRouterFlux2Klein              ID = OpenRouterFlux2Klein4B
 	OpenRouterGrokImagineImageQuality ID = "openrouter.grok-imagine-image-quality"
 	OpenRouterMAIImage25              ID = "openrouter.mai-image-2.5"
 	OpenRouterMAIImage25Pro           ID = "openrouter.mai-image-2.5-pro"
+	OpenRouterRiverflowV2Pro          ID = "openrouter.riverflow-v2-pro"
+	OpenRouterRiverflowV2Fast         ID = "openrouter.riverflow-v2-fast"
 	OpenRouterRiverflowV25Pro         ID = "openrouter.riverflow-v2.5-pro"
 	OpenRouterRiverflowV25Fast        ID = "openrouter.riverflow-v2.5-fast"
 	OpenRouterRecraftV41              ID = "openrouter.recraft-v4.1"
@@ -998,6 +1002,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultAspectRatio: "1:1",
 		SupportedQualities: []string{"default"},
 		DefaultQuality:     "default",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterGemini3ProImage: {
 		ID:              OpenRouterGemini3ProImage,
@@ -1083,6 +1088,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultAspectRatio: "1:1",
 		SupportedQualities: []string{"default"},
 		DefaultQuality:     "default",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Max: {
 		ID:              OpenRouterFlux2Max,
@@ -1097,6 +1103,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultAspectRatio: "1:1",
 		SupportedQualities: []string{"default"},
 		DefaultQuality:     "default",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Flex: {
 		ID:              OpenRouterFlux2Flex,
@@ -1111,6 +1118,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultAspectRatio: "1:1",
 		SupportedQualities: []string{"default"},
 		DefaultQuality:     "default",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterFlux2Klein4B: {
 		ID:              OpenRouterFlux2Klein4B,
@@ -1125,6 +1133,7 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultAspectRatio: "1:1",
 		SupportedQualities: []string{"default"},
 		DefaultQuality:     "default",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterGrokImagineImageQuality: {
 		ID:              OpenRouterGrokImagineImageQuality,
@@ -1163,6 +1172,38 @@ var OpenRouterImageGenerationModels = map[ID]ImageGenerationModel{
 		DefaultAspectRatio:    "1:1",
 		SupportedQualities:    []string{"default"},
 		DefaultQuality:        "default",
+	},
+	OpenRouterRiverflowV2Pro: {
+		ID:              OpenRouterRiverflowV2Pro,
+		Name:            "OpenRouter – Riverflow V2 Pro",
+		Provider:        ProviderOpenRouter,
+		APIModel:        "sourceful/riverflow-v2-pro",
+		MaxPromptTokens: 4000,
+		SupportedAspectRatios: []string{
+			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16", "21:9",
+		},
+		DefaultAspectRatio: "1:1",
+		SupportedSizes:     []string{"1K", "2K", "4K"},
+		DefaultSize:        "1K",
+		SupportedQualities: []string{"1K", "2K", "4K"},
+		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
+	},
+	OpenRouterRiverflowV2Fast: {
+		ID:              OpenRouterRiverflowV2Fast,
+		Name:            "OpenRouter – Riverflow V2 Fast",
+		Provider:        ProviderOpenRouter,
+		APIModel:        "sourceful/riverflow-v2-fast",
+		MaxPromptTokens: 4000,
+		SupportedAspectRatios: []string{
+			"1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16",
+		},
+		DefaultAspectRatio: "1:1",
+		SupportedSizes:     []string{"1K", "2K"},
+		DefaultSize:        "1K",
+		SupportedQualities: []string{"1K", "2K"},
+		DefaultQuality:     "1K",
+		OutputModalities:   []string{"image"},
 	},
 	OpenRouterRiverflowV25Pro: {
 		ID:              OpenRouterRiverflowV25Pro,

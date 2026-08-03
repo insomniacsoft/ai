@@ -3,8 +3,8 @@ module github.com/joakimcarlsson/ai/image/gemini
 go 1.25.8
 
 require (
-	github.com/joakimcarlsson/ai/image v0.2.0
-	github.com/joakimcarlsson/ai/model v0.8.0
+	github.com/joakimcarlsson/ai/image v0.2.0-overtura.1
+	github.com/joakimcarlsson/ai/model v0.8.0-overtura.1
 	google.golang.org/genai v1.61.0
 )
 
