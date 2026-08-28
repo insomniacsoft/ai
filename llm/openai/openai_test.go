@@ -821,3 +821,116 @@ func TestUsageMetadataField(t *testing.T) {
 		t.Error("a top-level lookup found a field that only exists inside usage")
 	}
 }
+
+// TestWireReasoningEffortLevels confirms each of the six ReasoningEffort
+// levels (087a069 added none, minimal, xhigh alongside the pre-existing low,
+// medium, high) maps to the expected reasoning_effort wire value on the
+// chat-completions path. A level missing from the switch in preparedParams
+// would silently send no field at all instead of failing loudly, so this
+// pins every case independently rather than trusting the switch is complete.
+func TestWireReasoningEffortLevels(t *testing.T) {
+	tests := []struct {
+		name   string
+		effort ReasoningEffort
+		want   string
+	}{
+		{"none", ReasoningEffortNone, "none"},
+		{"minimal", ReasoningEffortMinimal, "minimal"},
+		{"low", ReasoningEffortLow, "low"},
+		{"medium", ReasoningEffortMedium, "medium"},
+		{"high", ReasoningEffortHigh, "high"},
+		{"xhigh", ReasoningEffortXhigh, "xhigh"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var body map[string]any
+			srv := newCompletionServer(t, &body, completionOK)
+			defer srv.Close()
+
+			client := NewLLM(
+				WithAPIKey("test-key"),
+				WithBaseURL(srv.URL),
+				WithModel(llm.Model{APIModel: "gpt-5", CanReason: true}),
+				WithReasoningEffort(tt.effort),
+			)
+
+			if _, err := client.SendMessages(context.Background(),
+				[]message.Message{message.NewUserMessage("hi")}, nil); err != nil {
+				t.Fatalf("SendMessages: %v", err)
+			}
+
+			got, _ := body["reasoning_effort"].(string)
+			if got != tt.want {
+				t.Errorf("reasoning_effort = %v, want %q",
+					body["reasoning_effort"], tt.want)
+			}
+		})
+	}
+}
+
+// TestWireReasoningEffortOmittedWhenModelCannotReason confirms the CanReason
+// gate in preparedParams: a client with WithReasoningEffort set still sends
+// no reasoning_effort field when the model's CanReason is false, for every
+// level. This is the gate a downstream caller relies on when turning
+// reasoning on for a model that may not support it -- it must fail closed
+// (omit the field, behave as a normal chat model) rather than send a value
+// the API would reject outright.
+func TestWireReasoningEffortOmittedWhenModelCannotReason(t *testing.T) {
+	levels := []ReasoningEffort{
+		ReasoningEffortNone, ReasoningEffortMinimal, ReasoningEffortLow,
+		ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXhigh,
+	}
+
+	for _, effort := range levels {
+		t.Run(string(effort), func(t *testing.T) {
+			var body map[string]any
+			srv := newCompletionServer(t, &body, completionOK)
+			defer srv.Close()
+
+			client := NewLLM(
+				WithAPIKey("test-key"),
+				WithBaseURL(srv.URL),
+				WithModel(llm.Model{APIModel: "gpt-4o-mini", CanReason: false}),
+				WithReasoningEffort(effort),
+			)
+
+			if _, err := client.SendMessages(context.Background(),
+				[]message.Message{message.NewUserMessage("hi")}, nil); err != nil {
+				t.Fatalf("SendMessages: %v", err)
+			}
+
+			if _, present := body["reasoning_effort"]; present {
+				t.Errorf(
+					"reasoning_effort should be omitted when CanReason=false, got %v",
+					body["reasoning_effort"],
+				)
+			}
+		})
+	}
+}
+
+// TestWireReasoningEffortOmittedWhenUnset confirms that a reasoning-capable
+// model with no WithReasoningEffort call sends no reasoning_effort field --
+// there is no default effort level applied on the caller's behalf.
+func TestWireReasoningEffortOmittedWhenUnset(t *testing.T) {
+	var body map[string]any
+	srv := newCompletionServer(t, &body, completionOK)
+	defer srv.Close()
+
+	client := NewLLM(
+		WithAPIKey("test-key"),
+		WithBaseURL(srv.URL),
+		WithModel(llm.Model{APIModel: "gpt-5", CanReason: true}),
+	)
+
+	if _, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil); err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+
+	if _, present := body["reasoning_effort"]; present {
+		t.Errorf("reasoning_effort should be omitted when unset, got %v",
+			body["reasoning_effort"])
+	}
+}
