@@ -780,3 +780,44 @@ func newCompletionServer(
 			_, _ = io.WriteString(w, response)
 		}))
 }
+
+// TestUsageMetadataField confirms a "usage."-prefixed field is read from the
+// usage object rather than the top-level extras.
+//
+// This is what makes a gateway's own cost reachable: usage is natively
+// modelled, so anything the provider adds inside it — OpenRouter's `cost` and
+// `cost_details` — never appears among the top-level extra fields, and a
+// caller asking for "cost" would silently get nothing at all.
+func TestUsageMetadataField(t *testing.T) {
+	srv := newCompletionServer(t, nil, `{"id":"x","object":"chat.completion",`+
+		`"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},`+
+		`"finish_reason":"stop"}],`+
+		`"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2,`+
+		`"cost":0.00031,"cost_details":{"upstream_inference_cost":0.00029}}}`)
+	defer srv.Close()
+
+	client := NewLLM(
+		WithAPIKey("test-key"),
+		WithBaseURL(srv.URL),
+		WithModel(llm.Model{APIModel: "x"}),
+		WithResponseMetadataField("usage.cost", "usage.cost"),
+		WithResponseMetadataField("cost", "toplevel.cost"),
+	)
+
+	resp, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil)
+	if err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+
+	cost, ok := resp.ProviderMetadata["usage.cost"].(float64)
+	if !ok || cost != 0.00031 {
+		t.Fatalf("usage.cost = %v, want 0.00031 (metadata: %v)",
+			resp.ProviderMetadata["usage.cost"], resp.ProviderMetadata)
+	}
+	// The same name without the prefix must NOT find it: the two namespaces
+	// are distinct, and conflating them would make the prefix meaningless.
+	if _, found := resp.ProviderMetadata["toplevel.cost"]; found {
+		t.Error("a top-level lookup found a field that only exists inside usage")
+	}
+}
