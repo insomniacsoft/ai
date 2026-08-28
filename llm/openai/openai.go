@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/joakimcarlsson/ai/llm"
@@ -21,6 +22,7 @@ import (
 	"github.com/joakimcarlsson/ai/types"
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/respjson"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -227,11 +229,17 @@ func WithRequestJSONField(key string, value any) Option {
 	}
 }
 
-// WithResponseMetadataField surfaces a top-level response field into
+// WithResponseMetadataField surfaces a response field into
 // [llm.Response].ProviderMetadata. responseField is read from the completion's
 // JSON extra fields (fields the OpenAI SDK does not model natively, such as
 // Perplexity's citations) and stored under metaKey, which callers should
 // namespace per provider (e.g. "perplexity.citations").
+//
+// A responseField prefixed "usage." is read from the USAGE object's extra
+// fields instead of the top-level ones — "usage.cost", for example, which is
+// where an OpenAI-compatible gateway reports what it actually charged for the
+// call. Usage is a natively modelled object, so a field nested inside it never
+// appears among the top-level extras and would otherwise be unreachable.
 func WithResponseMetadataField(responseField, metaKey string) Option {
 	return func(o *Options) {
 		if o.metadataFields == nil {
@@ -995,7 +1003,7 @@ func (c *Client) providerMetadata(
 	}
 	var meta map[string]any
 	for field, key := range c.options.metadataFields {
-		f, ok := completion.JSON.ExtraFields[field]
+		f, ok := extraField(completion, field)
 		if !ok {
 			continue
 		}
@@ -1013,6 +1021,18 @@ func (c *Client) providerMetadata(
 		meta[key] = value
 	}
 	return meta
+}
+
+// extraField resolves one configured metadata field to the raw JSON the
+// provider sent, from the top-level extras or — for a "usage."-prefixed name —
+// from the usage object's own extras.
+func extraField(completion openaisdk.ChatCompletion, field string) (respjson.Field, bool) {
+	if nested, ok := strings.CutPrefix(field, "usage."); ok {
+		f, ok := completion.Usage.JSON.ExtraFields[nested]
+		return f, ok
+	}
+	f, ok := completion.JSON.ExtraFields[field]
+	return f, ok
 }
 
 func (c *Client) responseFormatForSchema(
