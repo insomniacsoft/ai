@@ -787,9 +787,19 @@ func (c *Client) runStream(
 	thinkingText := ""
 	toolCalls := make([]message.ToolCall, 0)
 
+	// Collected from the chunks because the accumulator discards them; see
+	// providerMetadataFrom. Skipped entirely when nothing is configured, so a
+	// caller that asked for no metadata pays nothing for this.
+	var topExtras, usageExtras map[string]respjson.Field
+
 	for openaiStream.Next() {
 		chunk := openaiStream.Current()
 		acc.AddChunk(chunk)
+
+		if len(c.options.metadataFields) > 0 {
+			topExtras = mergeExtras(topExtras, chunk.JSON.ExtraFields)
+			usageExtras = mergeExtras(usageExtras, chunk.Usage.JSON.ExtraFields)
+		}
 
 		for _, choice := range chunk.Choices {
 			for _, key := range []string{"reasoning", "reasoning_content"} {
@@ -840,7 +850,7 @@ func (c *Client) runStream(
 			ToolCalls:        toolCalls,
 			Usage:            c.usage(acc.ChatCompletion),
 			FinishReason:     finishReason,
-			ProviderMetadata: c.providerMetadata(acc.ChatCompletion),
+			ProviderMetadata: c.providerMetadataFrom(topExtras, usageExtras),
 		}
 		applyResponseHeaders(resp, raw)
 		if structured {
@@ -998,12 +1008,34 @@ func extraUsageInt(usage openaisdk.CompletionUsage, key string) int64 {
 func (c *Client) providerMetadata(
 	completion openaisdk.ChatCompletion,
 ) map[string]any {
+	return c.providerMetadataFrom(
+		completion.JSON.ExtraFields, completion.Usage.JSON.ExtraFields)
+}
+
+// providerMetadataFrom resolves the configured fields from the two extras maps
+// a response carries, rather than from a ChatCompletion.
+//
+// It exists because a STREAMED response has no ChatCompletion to read them
+// from. The SDK's accumulator says so twice in its own source -- "The
+// ChatCompletion field JSON does not get accumulated" on AddChunk, and "Ignores
+// the JSON field" on accumulateDelta, which copies Usage field by scalar field
+// and never assigns Usage.JSON. So acc.ChatCompletion.Usage.JSON.ExtraFields is
+// always a nil map, and metadata read off the accumulator is always empty.
+//
+// That failure is silent, which is why it survived: a provider that never
+// reports a cost and a provider whose cost was dropped in transit produce the
+// identical downstream result -- no metadata, fall back to table pricing, no
+// error anywhere. runStream therefore collects the extras from the chunks
+// themselves and calls this directly.
+func (c *Client) providerMetadataFrom(
+	top, usage map[string]respjson.Field,
+) map[string]any {
 	if len(c.options.metadataFields) == 0 {
 		return nil
 	}
 	var meta map[string]any
 	for field, key := range c.options.metadataFields {
-		f, ok := extraField(completion, field)
+		f, ok := lookupExtra(top, usage, field)
 		if !ok {
 			continue
 		}
@@ -1027,12 +1059,41 @@ func (c *Client) providerMetadata(
 // provider sent, from the top-level extras or — for a "usage."-prefixed name —
 // from the usage object's own extras.
 func extraField(completion openaisdk.ChatCompletion, field string) (respjson.Field, bool) {
+	return lookupExtra(
+		completion.JSON.ExtraFields, completion.Usage.JSON.ExtraFields, field)
+}
+
+// lookupExtra is the one place the "usage."-prefix rule lives, so the streaming
+// and non-streaming paths cannot disagree about where a configured field is
+// read from.
+func lookupExtra(
+	top, usage map[string]respjson.Field, field string,
+) (respjson.Field, bool) {
 	if nested, ok := strings.CutPrefix(field, "usage."); ok {
-		f, ok := completion.Usage.JSON.ExtraFields[nested]
+		f, ok := usage[nested]
 		return f, ok
 	}
-	f, ok := completion.JSON.ExtraFields[field]
+	f, ok := top[field]
 	return f, ok
+}
+
+// mergeExtras folds src into dst with later values winning, allocating only
+// when there is something to keep.
+//
+// Later-wins rather than first-wins because a streamed usage object arrives on
+// the FINAL chunk: an earlier chunk carrying the same key is a partial the
+// provider has since superseded.
+func mergeExtras(dst, src map[string]respjson.Field) map[string]respjson.Field {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[string]respjson.Field, len(src))
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (c *Client) responseFormatForSchema(
