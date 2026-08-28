@@ -381,7 +381,7 @@ func userInputContent(msg message.Message) responses.EasyInputMessageContentUnio
 		// decide. Its String(provider) yields a base64 data URL.
 		parts = append(parts, responses.ResponseInputContentUnionParam{
 			OfInputImage: &responses.ResponseInputImageParam{
-				ImageURL: openaisdk.String(bin.String(model.ProviderOpenAI)),
+				ImageURL: openaisdk.String(bin.String("openai")),
 				Detail:   responses.ResponseInputImageDetailAuto,
 			},
 		})

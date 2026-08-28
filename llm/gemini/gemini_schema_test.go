@@ -3,7 +3,7 @@ package gemini
 import (
 	"testing"
 
-	"github.com/joakimcarlsson/ai/model"
+	"github.com/joakimcarlsson/ai/llm"
 	"github.com/joakimcarlsson/ai/schema"
 	"google.golang.org/genai"
 )
@@ -179,7 +179,7 @@ func TestWithCachedContentDisabledLeavesEmpty(t *testing.T) {
 // TestBuildConfigNoCacheLeavesEmpty verifies the default path leaves
 // CachedContent empty.
 func TestBuildConfigNoCacheLeavesEmpty(t *testing.T) {
-	cfg := (&Client{options: Options{model: model.Model{}}}).buildConfig(nil, nil)
+	cfg := (&Client{options: Options{model: llm.Model{}}}).buildConfig(nil, nil)
 	if cfg.CachedContent != "" {
 		t.Errorf("CachedContent = %q, want empty by default", cfg.CachedContent)
 	}

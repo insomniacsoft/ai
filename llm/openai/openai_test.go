@@ -799,7 +799,7 @@ func TestUsageMetadataField(t *testing.T) {
 	client := NewLLM(
 		WithAPIKey("test-key"),
 		WithBaseURL(srv.URL),
-		WithModel(model.Model{APIModel: "x"}),
+		WithModel(llm.Model{APIModel: "x"}),
 		WithResponseMetadataField("usage.cost", "usage.cost"),
 		WithResponseMetadataField("cost", "toplevel.cost"),
 	)
