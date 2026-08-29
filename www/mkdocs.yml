@@ -73,6 +73,8 @@ nav:
     - Context Strategies: agent/context-strategies.md
     - Toolsets: agent/toolsets.md
     - Instruction Templates: agent/instruction-templates.md
+  - Realtime:
+    - Overview: realtime/overview.md
   - Integrations:
     - PostgreSQL: integrations/postgres.md
     - SQLite: integrations/sqlite.md
