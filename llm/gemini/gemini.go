@@ -43,6 +43,8 @@ type Options struct {
 	stopSequences    []string
 	timeout          *time.Duration
 	disableCache     bool
+	cachedContent    string
+	cacheTTL         *time.Duration
 	frequencyPenalty *float64
 	presencePenalty  *float64
 	seed             *int64
@@ -112,6 +114,22 @@ func WithHTTPClient(c *http.Client) Option {
 
 // WithDisableCache disables response caching.
 func WithDisableCache() Option { return func(o *Options) { o.disableCache = true } }
+
+// WithCachedContent attaches a previously created Gemini context cache (the
+// resource name returned by [Client.CreateCache], e.g.
+// "cachedContents/abc123") to every request. genai rejects a cache combined
+// with inline system instructions or tools, so when a cache is set buildConfig
+// omits both -- they are expected to live in the cache itself. WithDisableCache
+// overrides this, leaving the cache off.
+func WithCachedContent(name string) Option {
+	return func(o *Options) { o.cachedContent = name }
+}
+
+// WithCacheTTL sets the time-to-live used when creating a context cache via
+// [Client.CreateCache]. A zero or unset TTL lets the API apply its default.
+func WithCacheTTL(d time.Duration) Option {
+	return func(o *Options) { o.cacheTTL = &d }
+}
 
 // WithFrequencyPenalty sets the frequency penalty.
 func WithFrequencyPenalty(
@@ -427,6 +445,14 @@ func (c *Client) buildConfig(
 		config.StopSequences = c.options.stopSequences
 	}
 
+	// A context cache already carries its own system instruction and tools;
+	// genai rejects a cache combined with inline system/tools, so when one is
+	// attached we set CachedContent and skip both.
+	if c.options.cachedContent != "" && !c.options.disableCache {
+		config.CachedContent = c.options.cachedContent
+		return config
+	}
+
 	if len(systemMessages) > 0 {
 		config.SystemInstruction = &genai.Content{
 			Parts: []*genai.Part{{Text: strings.Join(systemMessages, "\n\n")}},
@@ -441,6 +467,49 @@ func (c *Client) buildConfig(
 	}
 
 	return config
+}
+
+// CreateCache creates a Gemini context cache from the given messages and tools
+// and returns its resource name (e.g. "cachedContents/abc123"). Pass that name
+// to [WithCachedContent] on a subsequent client so the cached system
+// instruction, history, and tools are reused without re-sending (and re-billing)
+// them. The TTL comes from [WithCacheTTL]; a zero TTL lets the API default
+// apply.
+func (c *Client) CreateCache(
+	ctx context.Context,
+	messages []message.Message,
+	tools []tool.BaseTool,
+) (string, error) {
+	contents, systemMessages := c.convertMessages(messages)
+
+	cfg := &genai.CreateCachedContentConfig{
+		Contents: contents,
+		TTL:      derefOr(c.options.cacheTTL),
+	}
+	if len(systemMessages) > 0 {
+		cfg.SystemInstruction = &genai.Content{
+			Parts: []*genai.Part{{Text: strings.Join(systemMessages, "\n\n")}},
+		}
+	}
+	if len(tools) > 0 || len(c.options.builtinTools) > 0 {
+		cfg.Tools = c.convertTools(tools)
+	}
+
+	cc, err := c.client.Caches.Create(ctx, c.options.model.APIModel, cfg)
+	if err != nil {
+		return "", fmt.Errorf("gemini cache create: %w", err)
+	}
+	return cc.Name, nil
+}
+
+// derefOr returns the pointed-to value, or the zero value when the pointer is
+// nil.
+func derefOr[T any](p *T) T {
+	if p == nil {
+		var zero T
+		return zero
+	}
+	return *p
 }
 
 // toolConfigParam maps a vendor-neutral [llm.ToolChoice] to Gemini's
