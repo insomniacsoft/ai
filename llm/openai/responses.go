@@ -480,6 +480,7 @@ func (c *responsesClient) extractOutput(
 	var content strings.Builder
 	var toolCalls []message.ToolCall
 	var citations []map[string]any
+	var searches []map[string]any
 
 	for _, item := range resp.Output {
 		switch item.Type {
@@ -508,6 +509,24 @@ func (c *responsesClient) extractOutput(
 				Type:     "function",
 				Finished: true,
 			})
+		case "web_search_call":
+			// Surfaced because a caller billed per search cannot otherwise
+			// count them: the model decides how many to run, and the response
+			// is the only place that number appears. Dropping these items --
+			// which is what happens without this arm -- leaves the spend
+			// unattributable and looks exactly like a turn that never
+			// searched.
+			//
+			// The action travels with each one. The provider bills "search
+			// actions", and an item's action is also open_page or
+			// find_in_page, so a consumer that wants to charge only for one
+			// kind needs to see which it was rather than being handed a total.
+			searches = append(searches, map[string]any{
+				"id":      item.ID,
+				"status":  item.Status,
+				"action":  item.Action.Type,
+				"queries": append([]string(nil), item.Action.Queries...),
+			})
 		case "code_interpreter_call":
 			if item.Code != "" {
 				content.WriteString("\n```python\n")
@@ -525,8 +544,14 @@ func (c *responsesClient) extractOutput(
 	}
 
 	var meta map[string]any
-	if len(citations) > 0 {
-		meta = map[string]any{"openai.url_citations": citations}
+	if len(citations) > 0 || len(searches) > 0 {
+		meta = map[string]any{}
+		if len(citations) > 0 {
+			meta["openai.url_citations"] = citations
+		}
+		if len(searches) > 0 {
+			meta["openai.web_search_calls"] = searches
+		}
 	}
 	return content.String(), toolCalls, meta
 }
