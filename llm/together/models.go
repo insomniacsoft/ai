@@ -324,6 +324,7 @@ var Models = map[string]llm.Model{
 		SupportsAttachments:   true,
 		SupportsStructuredOut: true,
 		ReleaseDate:           "2026-06-12",
+		LastUpdated:           "2026-06-12",
 	},
 	KimiK3: {
 		ID:                    KimiK3,
@@ -369,6 +370,7 @@ var Models = map[string]llm.Model{
 		CanReason:             true,
 		SupportsStructuredOut: true,
 		ReleaseDate:           "2025-08-04",
+		LastUpdated:           "2025-08-18",
 	},
 	GPTOss20B: {
 		ID:                    GPTOss20B,
@@ -383,6 +385,7 @@ var Models = map[string]llm.Model{
 		CanReason:             true,
 		SupportsStructuredOut: true,
 		ReleaseDate:           "2025-08-04",
+		LastUpdated:           "2025-08-04",
 	},
 	PearlAIGemma431BIt: {
 		ID:                    PearlAIGemma431BIt,

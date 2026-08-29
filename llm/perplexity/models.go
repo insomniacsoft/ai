@@ -145,6 +145,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      25,
 		CostPer1MInCached: 0.5,
 		ReleaseDate:       "2026-05",
+		LastUpdated:       "2026-05",
 	},
 	ClaudeOpus5: {
 		ID:                ClaudeOpus5,
@@ -156,6 +157,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      25,
 		CostPer1MInCached: 0.5,
 		ReleaseDate:       "2026-07",
+		LastUpdated:       "2026-07",
 	},
 	ClaudeSonnet45: {
 		ID:                ClaudeSonnet45,
@@ -187,6 +189,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      10,
 		CostPer1MInCached: 0.2,
 		ReleaseDate:       "2026-06",
+		LastUpdated:       "2026-06",
 	},
 	Codellama70BInstruct: {
 		ID:       Codellama70BInstruct,
@@ -223,6 +226,7 @@ var Models = map[string]llm.Model{
 		CostPer1MIn:  0.25,
 		CostPer1MOut: 1.5,
 		ReleaseDate:  "2026-05",
+		LastUpdated:  "2026-05",
 	},
 	Gemini31FlashLitePreview: {
 		ID:       Gemini31FlashLitePreview,
@@ -251,6 +255,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      9,
 		CostPer1MInCached: 0.15,
 		ReleaseDate:       "2026-05",
+		LastUpdated:       "2026-05",
 	},
 	Gemini35FlashLite: {
 		ID:                Gemini35FlashLite,
@@ -262,6 +267,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      2.5,
 		CostPer1MInCached: 0.03,
 		ReleaseDate:       "2026-07",
+		LastUpdated:       "2026-07",
 	},
 	Gemini36Flash: {
 		ID:                Gemini36Flash,
@@ -273,6 +279,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      7.5,
 		CostPer1MInCached: 0.15,
 		ReleaseDate:       "2026-07",
+		LastUpdated:       "2026-07",
 	},
 	Gemini37Flash: {
 		ID:                Gemini37Flash,
@@ -284,6 +291,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      1.875,
 		CostPer1MInCached: 0.0375,
 		ReleaseDate:       "2026-08",
+		LastUpdated:       "2026-08",
 	},
 	Llama370BInstruct: {
 		ID:       Llama370BInstruct,
@@ -473,6 +481,7 @@ var Models = map[string]llm.Model{
 		CostPer1MIn:  0.2,
 		CostPer1MOut: 1.2,
 		ReleaseDate:  "2026-07",
+		LastUpdated:  "2026-07",
 	},
 	GPT56Sol: {
 		ID:           GPT56Sol,
@@ -483,6 +492,7 @@ var Models = map[string]llm.Model{
 		CostPer1MIn:  5,
 		CostPer1MOut: 30,
 		ReleaseDate:  "2026-07",
+		LastUpdated:  "2026-07",
 	},
 	GPT56Terra: {
 		ID:           GPT56Terra,
@@ -493,6 +503,7 @@ var Models = map[string]llm.Model{
 		CostPer1MIn:  2,
 		CostPer1MOut: 12,
 		ReleaseDate:  "2026-07",
+		LastUpdated:  "2026-07",
 	},
 	DeepseekV4Flash0731: {
 		ID:                DeepseekV4Flash0731,
@@ -507,6 +518,7 @@ var Models = map[string]llm.Model{
 		DefaultMaxTokens:  8192,
 		CanReason:         true,
 		ReleaseDate:       "2026-08",
+		LastUpdated:       "2026-08",
 	},
 	GLM52: {
 		ID:                GLM52,
@@ -519,6 +531,7 @@ var Models = map[string]llm.Model{
 		CostPer1MInCached: 0.14,
 		CanReason:         true,
 		ReleaseDate:       "2026-06",
+		LastUpdated:       "2026-06",
 	},
 	KimiK27Code: {
 		ID:                KimiK27Code,
@@ -530,6 +543,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      4,
 		CostPer1MInCached: 0.19,
 		ReleaseDate:       "2026-06",
+		LastUpdated:       "2026-06",
 	},
 	KimiK3: {
 		ID:                KimiK3,
@@ -542,6 +556,7 @@ var Models = map[string]llm.Model{
 		CostPer1MInCached: 0.3,
 		CanReason:         true,
 		ReleaseDate:       "2026-07",
+		LastUpdated:       "2026-07",
 	},
 	Nemotron3Ultra550BA55B: {
 		ID:                Nemotron3Ultra550BA55B,
@@ -553,6 +568,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      2.5,
 		CostPer1MInCached: 0.25,
 		ReleaseDate:       "2026-08",
+		LastUpdated:       "2026-08",
 	},
 	Nemotron35Lightning30BA3B: {
 		ID:                Nemotron35Lightning30BA3B,
@@ -564,6 +580,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      0.17,
 		CostPer1MInCached: 0.00115,
 		ReleaseDate:       "2026-08",
+		LastUpdated:       "2026-08",
 	},
 	PerplexitySonar: {
 		ID:                PerplexitySonar,
@@ -676,6 +693,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      2.5,
 		CostPer1MInCached: 0.2,
 		ReleaseDate:       "2026-05",
+		LastUpdated:       "2026-05",
 	},
 	Grok420NonReasoning: {
 		ID:                Grok420NonReasoning,
@@ -687,6 +705,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      2.5,
 		CostPer1MInCached: 0.2,
 		ReleaseDate:       "2026-05",
+		LastUpdated:       "2026-05",
 	},
 	Grok420Reasoning: {
 		ID:                Grok420Reasoning,
@@ -708,6 +727,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      2.5,
 		CostPer1MInCached: 0.2,
 		ReleaseDate:       "2026-05",
+		LastUpdated:       "2026-05",
 	},
 	Grok45: {
 		ID:                Grok45,
@@ -719,6 +739,7 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      6,
 		CostPer1MInCached: 0.3,
 		ReleaseDate:       "2026-07",
+		LastUpdated:       "2026-07",
 	},
 	Grok46: {
 		ID:                Grok46,
@@ -730,5 +751,6 @@ var Models = map[string]llm.Model{
 		CostPer1MOut:      6,
 		CostPer1MInCached: 0.5,
 		ReleaseDate:       "2026-08",
+		LastUpdated:       "2026-08",
 	},
 }

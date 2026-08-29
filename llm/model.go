@@ -61,6 +61,20 @@ type Model struct {
 	// accident.
 	ReleaseDate string `json:"release_date,omitempty"`
 
+	// LastUpdated is when the provider last changed anything it publishes
+	// about this model, as YYYY-MM-DD.
+	//
+	// It is a different fact from ReleaseDate and is carried alongside it
+	// rather than folded into it. A floating alias is released once and then
+	// repointed at snapshot after snapshot, so its release date says when the
+	// NAME first appeared and this says when what the name currently resolves
+	// to last moved. The source publishes one, the other, both, or neither --
+	// thirty-one of the sixty-seven OpenAI chat entries carry this and not a
+	// release date -- so a consumer ordering by recency needs both fields and
+	// a stated rule for combining them, which is exactly why neither is
+	// synthesised here.
+	LastUpdated string `json:"last_updated,omitempty"`
+
 	// RetirementDate is when the provider stops serving this model, as
 	// YYYY-MM-DD, and is set only for a model with a published end. A caller
 	// pointing somebody at a model can say how long it has left instead of
