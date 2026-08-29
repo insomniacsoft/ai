@@ -8,6 +8,7 @@ const (
 	imageImport      = "github.com/joakimcarlsson/ai/image"
 	ttsImport        = "github.com/joakimcarlsson/ai/tts"
 	sttImport        = "github.com/joakimcarlsson/ai/stt"
+	realtimeImport   = "github.com/joakimcarlsson/ai/realtime"
 	embeddingsImport = "github.com/joakimcarlsson/ai/embeddings"
 	rerankersImport  = "github.com/joakimcarlsson/ai/rerankers"
 )
@@ -73,6 +74,8 @@ var targets = []target{
 		"openrouter.",
 	)),
 
+	realtime("openai", "realtime/openai", "openai"),
+
 	speech("openai", "tts/openai", "openai"),
 	speech("elevenlabs", "tts/elevenlabs", "elevenlabs"),
 	billed(speech("google", "tts/google", "google"), "google-cloud"),
@@ -130,6 +133,25 @@ func image(source, dir, pkg string) target {
 			"the source publishes a single rate per model, an entry's size and",
 			"quality table is written only when the model is new to the catalog",
 			"and is carried over from then on.",
+		))
+}
+
+// realtime catalogs the models a live voice session is opened against.
+//
+// It is the one kind whose rates differ by class within a single conversation
+// -- audio output ran 160x a cached text token when this was written -- so
+// every class carries its own field rather than the in/out/cached triple the
+// chat catalogs use. See realtime.Model.
+func realtime(source, dir, pkg string) target {
+	return newTarget(source, kindRealtime, dir, pkg, realtimeImport,
+		"realtime.Model", realtimeFields, doc(
+			"Rates are per 1M tokens, in the currency the provider bills in,",
+			"and are given per billable class: a voice session's classes are",
+			"priced far enough apart that one figure would say nothing.",
+			"",
+			"A DEFAULT, not an authority. A vendor's rate card changes without",
+			"notice, so a caller that lets an operator state a rate must let",
+			"that rate win over this one.",
 		))
 }
 

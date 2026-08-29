@@ -350,6 +350,8 @@ func modelFor(t target, m apiModel) model {
 		speechFieldsFor(m, currency, fields)
 	case kindTranscription:
 		transcriptionFieldsFor(m, currency, fields)
+	case kindRealtime:
+		realtimeFieldsFor(m, currency, fields)
 	case kindEmbedding:
 		embeddingFieldsFor(m, currency, fields)
 	case kindRerank:
@@ -422,6 +424,38 @@ func speechFieldsFor(m apiModel, currency string, fields map[string]string) {
 	setInt(fields, "MaxCharacters", m.limit("character_limit"))
 	setStrings(fields, "SupportedFormats", m.Lists["output_formats"])
 	fields["SupportsStreaming"] = boolean(m.feature("streaming"))
+}
+
+// realtimeFieldsFor reads one rate per billable class.
+//
+// The source prices a realtime model per METRIC and per MODALITY -- the same
+// "input_tokens" metric appears three times, once for text, once for audio and
+// once for image, at rates an order of magnitude apart. Reading the metric
+// without the modality would take whichever entry happened to come first and
+// bill a whole voice conversation at it, which is the mistake this function
+// exists to make impossible to write by hand.
+func realtimeFieldsFor(
+	m apiModel,
+	currency string,
+	fields map[string]string,
+) {
+	for _, modality := range []struct {
+		dim             string
+		in, cached, out string
+	}{
+		{"text", "CostPer1MTextIn", "CostPer1MTextInCached", "CostPer1MTextOut"},
+		{"audio", "CostPer1MAudioIn", "CostPer1MAudioInCached", "CostPer1MAudioOut"},
+		// Image has no output rate: nothing generates an image in a realtime
+		// session, and the source publishes none.
+		{"image", "CostPer1MImageIn", "CostPer1MImageInCached", ""},
+	} {
+		prices := withDim(m.Prices, "modality", modality.dim)
+		setRate(fields, modality.in, prices, currency, tokenUnits, "input_tokens")
+		setRate(fields, modality.cached, prices, currency, tokenUnits, "cached_input_tokens")
+		if modality.out != "" {
+			setRate(fields, modality.out, prices, currency, tokenUnits, "output_tokens")
+		}
+	}
 }
 
 func transcriptionFieldsFor(
