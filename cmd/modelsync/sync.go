@@ -16,6 +16,7 @@ const (
 	kindSpeech        kind = "speech"
 	kindTranscription kind = "transcription"
 	kindTool          kind = "tool"
+	kindRealtime      kind = "realtime"
 	kindEmbedding     kind = "embedding"
 	kindRerank        kind = "rerank"
 )

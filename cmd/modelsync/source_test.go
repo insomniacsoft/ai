@@ -425,6 +425,65 @@ func TestAToolWithNoPerCallRateWritesNone(t *testing.T) {
 	}
 }
 
+// Pins that realtimeFieldsFor reads the modality dimension, not just the
+// metric: audio input here is 8x text input, so a generator that dropped
+// the modality cannot produce this result by accident. Also confirms that
+// no image output rate being published leaves that field absent, not zero.
+func TestModelForRealtimePricesByModality(t *testing.T) {
+	price := func(metric, modality string, amount float64) apiPrice {
+		return apiPrice{
+			Metric:   metric,
+			Unit:     "per_1m_tokens",
+			Amount:   amount,
+			Currency: "USD",
+			Dims:     map[string]string{"modality": modality},
+		}
+	}
+	m := apiModel{
+		ID:   "voice",
+		Name: "Voice",
+		Kind: "realtime",
+		Prices: []apiPrice{
+			price("input_tokens", "text", 4),
+			price("cached_input_tokens", "text", 0.4),
+			price("output_tokens", "text", 16),
+			price("input_tokens", "audio", 32),
+			price("cached_input_tokens", "audio", 0.4),
+			price("output_tokens", "audio", 64),
+			price("input_tokens", "image", 5),
+			price("cached_input_tokens", "image", 0.5),
+		},
+	}
+
+	got := modelFor(realtime("demo", "realtime/demo", "demo"), m)
+
+	for _, want := range []struct {
+		field string
+		rate  string
+	}{
+		{"CostPer1MTextIn", "4"},
+		{"CostPer1MTextInCached", "0.4"},
+		{"CostPer1MTextOut", "16"},
+		{"CostPer1MAudioIn", "32"},
+		{"CostPer1MAudioInCached", "0.4"},
+		{"CostPer1MAudioOut", "64"},
+		{"CostPer1MImageIn", "5"},
+		{"CostPer1MImageInCached", "0.5"},
+	} {
+		if got.fields[want.field] != want.rate {
+			t.Errorf("%s = %q, want %q -- a rate read without its modality",
+				want.field, got.fields[want.field], want.rate)
+		}
+	}
+
+	if v, present := got.fields["CostPer1MImageOut"]; present {
+		t.Errorf(
+			"CostPer1MImageOut = %q, want it absent -- no image output rate is published",
+			v,
+		)
+	}
+}
+
 func TestModelForEmbeddingSortsDimensionsNumerically(t *testing.T) {
 	m := apiModel{
 		ID:    "embed",

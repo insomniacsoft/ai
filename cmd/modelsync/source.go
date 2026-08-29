@@ -355,6 +355,8 @@ func modelFor(t target, m apiModel) model {
 		transcriptionFieldsFor(m, currency, fields)
 	case kindTool:
 		toolFieldsFor(m, currency, fields)
+	case kindRealtime:
+		realtimeFieldsFor(m, currency, fields)
 	case kindEmbedding:
 		embeddingFieldsFor(m, currency, fields)
 	case kindRerank:
@@ -517,6 +519,55 @@ func plainToolRates(m apiModel) []apiPrice {
 func unqualified(detail string) string {
 	base, _, _ := strings.Cut(detail, "(")
 	return strings.ToLower(strings.TrimSpace(base))
+}
+
+// realtimeFieldsFor reads one rate per billable class. The source prices a
+// realtime model per metric and per modality: the same "input_tokens"
+// metric appears once each for text, audio and image, at rates an order of
+// magnitude apart, so both dimensions must be read together. Image has no
+// output rate: nothing generates an image in a realtime session, and the
+// source publishes none.
+func realtimeFieldsFor(
+	m apiModel,
+	currency string,
+	fields map[string]string,
+) {
+	for _, modality := range []struct {
+		dim             string
+		in, cached, out string
+	}{
+		{"text", "CostPer1MTextIn", "CostPer1MTextInCached", "CostPer1MTextOut"},
+		{"audio", "CostPer1MAudioIn", "CostPer1MAudioInCached", "CostPer1MAudioOut"},
+		{"image", "CostPer1MImageIn", "CostPer1MImageInCached", ""},
+	} {
+		prices := withDim(m.Prices, "modality", modality.dim)
+		setRate(
+			fields,
+			modality.in,
+			prices,
+			currency,
+			tokenUnits,
+			"input_tokens",
+		)
+		setRate(
+			fields,
+			modality.cached,
+			prices,
+			currency,
+			tokenUnits,
+			"cached_input_tokens",
+		)
+		if modality.out != "" {
+			setRate(
+				fields,
+				modality.out,
+				prices,
+				currency,
+				tokenUnits,
+				"output_tokens",
+			)
+		}
+	}
 }
 
 func transcriptionFieldsFor(
