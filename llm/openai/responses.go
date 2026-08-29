@@ -157,6 +157,22 @@ func WithWebSearch(opts ...WebSearchOpts) ResponsesOption {
 			}
 			if c.UserLocation != nil {
 				p.UserLocation = responses.WebSearchToolUserLocationParam{
+					// REQUIRED, and the only value the API accepts -- the
+					// SDK registers a field validator for exactly
+					// "approximate". Without it the field is `omitzero` and
+					// a plain string, so an unset Type is dropped from the
+					// JSON entirely and every request carrying a
+					// user_location is refused:
+					//
+					//   400 Missing required parameter:
+					//   'tools[0].user_location.type'
+					//
+					// Nothing partial gets through, because any caller
+					// setting so much as a timezone hits it. That is why it
+					// is set here rather than exposed on UserLocation: there
+					// is no second value to choose, and a caller who left it
+					// blank would break every one of their searches.
+					Type:     "approximate",
 					City:     optString(c.UserLocation.City),
 					Country:  optString(c.UserLocation.Country),
 					Region:   optString(c.UserLocation.Region),
