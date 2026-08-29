@@ -51,6 +51,10 @@ var (
 		"CostPer1MAudioIn", "CostPer1MAudioInCached", "CostPer1MAudioOut",
 		"CostPer1MImageIn", "CostPer1MImageInCached",
 	}
+	toolFields = []string{
+		"ID", "Name", "Provider", "APIModel", "Currency",
+		"CostPer1KCalls",
+	}
 	embeddingFields = []string{
 		"ID", "Name", "Provider", "APIModel", "Currency",
 		"CostPer1MTokens", "MaxInputTokens", "EmbeddingDims",

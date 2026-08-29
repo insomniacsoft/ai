@@ -69,6 +69,9 @@ use (
 	./realtime
 	./realtime/openai
 
+	./tools
+	./tools/openai
+
 	./llm
 	./llm/anthropic
 	./llm/openai

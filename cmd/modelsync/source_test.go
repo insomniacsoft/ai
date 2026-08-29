@@ -190,6 +190,66 @@ func TestModelForTranscriptionPricesByDirection(t *testing.T) {
 	}
 }
 
+// TestModelForToolReadsThePerThousandRate.
+//
+// A hosted tool is billed per invocation, and the source publishes that rate
+// in thousands: "$10.00 / 1k calls". The catalog keeps that unit rather than
+// scaling to the per-million the token catalogs use, so this pins the number
+// through unchanged -- a 10 that arrived as 10000, or as 0.01, is a bill wrong
+// by a factor of a thousand in a direction nobody audits.
+func TestModelForToolReadsThePerThousandRate(t *testing.T) {
+	m := apiModel{
+		ID:   "web-search",
+		Name: "Web search",
+		Kind: "tool",
+		Prices: []apiPrice{
+			{
+				Metric: "tool_call", Unit: "per_1k_calls", Amount: 10, Currency: "USD",
+				Dims: map[string]string{"detail": "web search (all models)", "tier": "standard"},
+			},
+			// The preview variant, priced separately and higher. Nothing in
+			// its dims marks it a variant, so it is the ordinary tie-break --
+			// fewest non-default dims, then lowest amount -- that has to keep
+			// it out.
+			{
+				Metric: "tool_call", Unit: "per_1k_calls", Amount: 25, Currency: "USD",
+				Dims: map[string]string{"detail": "web search preview (non-reasoning models)", "tier": "standard"},
+			},
+		},
+	}
+
+	got := modelFor(tool("demo", "tools/demo", "demo"), m)
+
+	if got.fields["CostPer1KCalls"] != "10" {
+		t.Errorf("CostPer1KCalls = %q, want 10 -- per thousand calls, as published",
+			got.fields["CostPer1KCalls"])
+	}
+	if got.fields["Currency"] != `"USD"` {
+		t.Errorf("Currency = %q, want USD", got.fields["Currency"])
+	}
+}
+
+// TestAToolWithNoPerCallRateWritesNone. Two of the four tools the source lists
+// are billed by storage or by session, not per call. A zero written into the
+// catalog would be read as free; an absent field is read as unpublished.
+func TestAToolWithNoPerCallRateWritesNone(t *testing.T) {
+	m := apiModel{
+		ID: "agent-kit", Name: "Agent Kit", Kind: "tool",
+		Prices: []apiPrice{
+			{
+				Metric: "storage", Unit: "per_gb_day", Amount: 0.1, Currency: "USD",
+				Dims: map[string]string{"detail": "file storage", "tier": "standard"},
+			},
+		},
+	}
+
+	got := modelFor(tool("demo", "tools/demo", "demo"), m)
+
+	if v, present := got.fields["CostPer1KCalls"]; present {
+		t.Errorf("CostPer1KCalls = %q, want it absent -- this tool publishes no per-call rate", v)
+	}
+}
+
 func TestModelForEmbeddingSortsDimensionsNumerically(t *testing.T) {
 	m := apiModel{
 		ID:    "embed",

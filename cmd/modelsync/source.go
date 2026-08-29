@@ -184,6 +184,10 @@ var (
 		"per_hour":   1.0 / 60,
 	}
 	imageUnits = map[string]float64{"per_image": 1}
+	// callUnits keeps the vendor's own unit rather than scaling to a million:
+	// a hosted tool is published per thousand calls ("$10.00 / 1k calls") and
+	// tools.Tool holds it that way on purpose. See CostPer1KCalls.
+	callUnits = map[string]float64{"per_1k_calls": 1}
 )
 
 // variantDims mark a rate as belonging to something other than plain
@@ -352,6 +356,8 @@ func modelFor(t target, m apiModel) model {
 		transcriptionFieldsFor(m, currency, fields)
 	case kindRealtime:
 		realtimeFieldsFor(m, currency, fields)
+	case kindTool:
+		toolFieldsFor(m, currency, fields)
 	case kindEmbedding:
 		embeddingFieldsFor(m, currency, fields)
 	case kindRerank:
@@ -456,6 +462,20 @@ func realtimeFieldsFor(
 			setRate(fields, modality.out, prices, currency, tokenUnits, "output_tokens")
 		}
 	}
+}
+
+// toolFieldsFor reads what one thousand invocations of a hosted tool cost.
+//
+// A tool may publish several standard rates for the same metric -- web search
+// prices its preview variant separately from the tool this library calls, and
+// prices an image search alongside both -- and none of the dims separating them
+// is a variant dim. So the choice falls to rate's ordinary tie-break: fewest
+// non-default dims, then the lowest amount. That resolves correctly today, and
+// it is a general policy rather than a rule about this tool, which is why no
+// prose from a "detail" dim is matched here. The rate is a default an operator
+// can override, and that is the seam that absorbs the day it resolves wrongly.
+func toolFieldsFor(m apiModel, currency string, fields map[string]string) {
+	setRate(fields, "CostPer1KCalls", m.Prices, currency, callUnits, "tool_call")
 }
 
 func transcriptionFieldsFor(

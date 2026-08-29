@@ -9,6 +9,7 @@ const (
 	ttsImport        = "github.com/joakimcarlsson/ai/tts"
 	sttImport        = "github.com/joakimcarlsson/ai/stt"
 	realtimeImport   = "github.com/joakimcarlsson/ai/realtime"
+	toolsImport      = "github.com/joakimcarlsson/ai/tools"
 	embeddingsImport = "github.com/joakimcarlsson/ai/embeddings"
 	rerankersImport  = "github.com/joakimcarlsson/ai/rerankers"
 )
@@ -75,6 +76,8 @@ var targets = []target{
 	)),
 
 	realtime("openai", "realtime/openai", "openai"),
+
+	tool("openai", "tools/openai", "openai"),
 
 	speech("openai", "tts/openai", "openai"),
 	speech("elevenlabs", "tts/elevenlabs", "elevenlabs"),
@@ -148,6 +151,31 @@ func realtime(source, dir, pkg string) target {
 			"Rates are per 1M tokens, in the currency the provider bills in,",
 			"and are given per billable class: a voice session's classes are",
 			"priced far enough apart that one figure would say nothing.",
+			"",
+			"A DEFAULT, not an authority. A vendor's rate card changes without",
+			"notice, so a caller that lets an operator state a rate must let",
+			"that rate win over this one.",
+		))
+}
+
+// tool catalogs the hosted tools a provider bills separately from the model.
+//
+// The one catalog whose entries are not models. A hosted tool is charged per
+// invocation, at a rate every model pays alike, so it belongs to the provider
+// rather than to any model -- which is exactly why it had no home here and its
+// rate was left to be typed in by hand, per installation, for a charge that
+// appears on every bill.
+func tool(source, dir, pkg string) target {
+	return newTarget(source, kindTool, dir, pkg, toolsImport,
+		"tools.Tool", toolFields, doc(
+			"Rates are per 1000 invocations, in the currency the provider",
+			"bills in -- the unit the provider publishes, kept rather than",
+			"scaled, so no factor of a thousand hides in a generated file.",
+			"",
+			"A tool's tokens are NOT here. A provider that bills a search per",
+			"call also bills the text that search read, at the calling model's",
+			"own rates, so a total carrying only this rate is short by the",
+			"larger half.",
 			"",
 			"A DEFAULT, not an authority. A vendor's rate card changes without",
 			"notice, so a caller that lets an operator state a rate must let",
