@@ -42,6 +42,7 @@ var Models = map[string]llm.Model{
 		SupportsStructuredOut: true,
 		State:                 "production",
 		ReleaseDate:           "2025-09-04",
+		LastUpdated:           "2025-09-04",
 	},
 	CompoundMini: {
 		ID:                    CompoundMini,
@@ -54,6 +55,7 @@ var Models = map[string]llm.Model{
 		SupportsStructuredOut: true,
 		State:                 "production",
 		ReleaseDate:           "2025-09-04",
+		LastUpdated:           "2025-09-04",
 	},
 	LlamaPromptGuard222M: {
 		ID:               LlamaPromptGuard222M,
@@ -67,6 +69,7 @@ var Models = map[string]llm.Model{
 		DefaultMaxTokens: 512,
 		State:            "preview",
 		ReleaseDate:      "2025-05-29",
+		LastUpdated:      "2025-05-29",
 	},
 	LlamaPromptGuard286M: {
 		ID:                    LlamaPromptGuard286M,
@@ -81,6 +84,7 @@ var Models = map[string]llm.Model{
 		SupportsStructuredOut: true,
 		State:                 "preview",
 		ReleaseDate:           "2025-05-29",
+		LastUpdated:           "2025-05-29",
 	},
 	MinimaxM27: {
 		ID:                    MinimaxM27,
@@ -109,6 +113,7 @@ var Models = map[string]llm.Model{
 		SupportsStructuredOut: true,
 		State:                 "production",
 		ReleaseDate:           "2025-08-05",
+		LastUpdated:           "2025-10-21",
 	},
 	GPTOss20B: {
 		ID:                    GPTOss20B,
@@ -125,6 +130,7 @@ var Models = map[string]llm.Model{
 		SupportsStructuredOut: true,
 		State:                 "production",
 		ReleaseDate:           "2025-08-05",
+		LastUpdated:           "2025-09-25",
 	},
 	GPTOssSafeguard20B: {
 		ID:                    GPTOssSafeguard20B,
@@ -141,6 +147,7 @@ var Models = map[string]llm.Model{
 		SupportsStructuredOut: true,
 		State:                 "preview",
 		ReleaseDate:           "2025-10-29",
+		LastUpdated:           "2025-10-29",
 	},
 	Qwen36_27BGroq: {
 		ID:                    Qwen36_27BGroq,

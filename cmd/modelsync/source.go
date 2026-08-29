@@ -411,6 +411,7 @@ func chatFieldsFor(
 	// flattened into it -- six OpenAI chat entries publish no state at all.
 	setAttr(fields, "State", m.Attrs["state"])
 	setAttr(fields, "ReleaseDate", m.Attrs["release_date"])
+	setAttr(fields, "LastUpdated", m.Attrs["last_updated"])
 	setAttr(fields, "RetirementDate", m.Attrs["retirement_date"])
 	setAttr(fields, "ReplacedBy", m.Attrs["recommended_replacement"])
 }

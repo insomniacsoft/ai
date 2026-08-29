@@ -162,6 +162,7 @@ func TestModelForChatCarriesTheLifecycleTheProviderPublishes(t *testing.T) {
 		Attrs: map[string]string{
 			"state":                   "deprecated",
 			"release_date":            "2024-05-13",
+			"last_updated":            "2024-12-17",
 			"retirement_date":         "2026-09-28",
 			"recommended_replacement": "new-model",
 		},
@@ -172,6 +173,7 @@ func TestModelForChatCarriesTheLifecycleTheProviderPublishes(t *testing.T) {
 	for _, want := range []struct{ field, value string }{
 		{"State", `"deprecated"`},
 		{"ReleaseDate", `"2024-05-13"`},
+		{"LastUpdated", `"2024-12-17"`},
 		{"RetirementDate", `"2026-09-28"`},
 		{"ReplacedBy", `"new-model"`},
 	} {
@@ -199,10 +201,46 @@ func TestALifecycleFieldTheSourceOmitsIsLeftOut(t *testing.T) {
 	if got.fields["State"] != `"active"` {
 		t.Errorf("State = %q, want active", got.fields["State"])
 	}
-	for _, field := range []string{"ReleaseDate", "RetirementDate", "ReplacedBy"} {
+	for _, field := range []string{"ReleaseDate", "LastUpdated", "RetirementDate", "ReplacedBy"} {
 		if v, present := got.fields[field]; present {
 			t.Errorf("%s = %q, want it absent -- the source publishes none", field, v)
 		}
+	}
+}
+
+// TestTheTwoDatesAreCarriedSeparately.
+//
+// Thirty-one OpenAI chat entries publish a last_updated and no release_date,
+// and twenty-five publish both. A generator that wrote whichever it found into
+// one field would produce a catalog where the same column means "released" for
+// some rows and "last changed" for others -- a consumer could still order by
+// it, and would have no way to know it was comparing two different facts.
+//
+// So each is written to its own field and neither substitutes for the other.
+// Deciding what to do when only one is present is the CONSUMER's rule to state,
+// which it can only do if it can tell them apart.
+func TestTheTwoDatesAreCarriedSeparately(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		attrs            map[string]string
+		release, updated string
+	}{
+		{"only a release date", map[string]string{"release_date": "2023-11-06"}, `"2023-11-06"`, ""},
+		{"only an update date", map[string]string{"last_updated": "2025-04-14"}, "", `"2025-04-14"`},
+		{"both", map[string]string{"release_date": "2024-05-13", "last_updated": "2024-12-17"}, `"2024-05-13"`, `"2024-12-17"`},
+		{"neither", map[string]string{}, "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := modelFor(chat("demo", "llm/demo", "demo"),
+				apiModel{ID: "m", Name: "M", Kind: "chat", Attrs: tc.attrs})
+
+			if got.fields["ReleaseDate"] != tc.release {
+				t.Errorf("ReleaseDate = %q, want %q", got.fields["ReleaseDate"], tc.release)
+			}
+			if got.fields["LastUpdated"] != tc.updated {
+				t.Errorf("LastUpdated = %q, want %q", got.fields["LastUpdated"], tc.updated)
+			}
+		})
 	}
 }
 
