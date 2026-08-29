@@ -588,6 +588,13 @@ func (c *Client) SendMessagesWithStructuredOutput(
 		outputSchema.Parameters,
 		outputSchema.Required,
 	)
+	// ResponseSchema is documented as requiring a compatible response MIME
+	// type alongside it ("If set, a compatible response_mime_type must also be
+	// set. Compatible mimetypes: application/json" -- genai's GenerateContentConfig).
+	// The field defaults to text/plain, and the SDK says the behavior of a
+	// mismatch is undefined, so a schema sent on its own is a request nobody
+	// promises anything about.
+	config.ResponseMIMEType = "application/json"
 
 	chat, err := c.client.Chats.Create(
 		ctx,
@@ -695,6 +702,10 @@ func (c *Client) streamInternal(
 			outputSchema.Parameters,
 			outputSchema.Required,
 		)
+		// Set on this path too. The two paths build their config
+		// independently, so a MIME type set only on the send path leaves
+		// every streamed structured-output call sending a schema without one.
+		config.ResponseMIMEType = "application/json"
 	}
 
 	chat, err := c.client.Chats.Create(
