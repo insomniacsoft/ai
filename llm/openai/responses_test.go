@@ -236,3 +236,87 @@ func TestWireReasoningEffortOmittedWhenUnset_Responses(t *testing.T) {
 			body["reasoning"])
 	}
 }
+
+// TestWireWebSearchUserLocationCarriesItsType_Responses.
+//
+// user_location.type is REQUIRED by the API and the field is `omitzero` on a
+// plain string, so leaving it unset drops it from the JSON entirely and the
+// request comes back:
+//
+//	400 Missing required parameter: 'tools[0].user_location.type'
+//
+// Nothing partial gets through -- any caller setting so much as a timezone
+// hits it -- so a web search with a user_location was refused every single
+// time. Found by a household asking a question and getting a technical error
+// back, months after this shipped, because a caller who sets no location at
+// all never reaches this branch and everything looked fine.
+func TestWireWebSearchUserLocationCarriesItsType_Responses(t *testing.T) {
+	var body map[string]any
+	srv := newResponsesServer(t, &body, responsesOK)
+	defer srv.Close()
+
+	client := NewResponsesLLM(
+		WithResponsesAPIKey("test-key"),
+		WithResponsesBaseURL(srv.URL),
+		WithResponsesModel(llm.Model{APIModel: "gpt-5"}),
+		WithWebSearch(WebSearchOpts{
+			UserLocation: &UserLocation{Timezone: "Europe/Bucharest"},
+		}),
+	)
+
+	if _, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil); err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+
+	tools, ok := body["tools"].([]any)
+	if !ok || len(tools) == 0 {
+		t.Fatalf("tools = %v, want the web_search tool", body["tools"])
+	}
+	web, ok := tools[0].(map[string]any)
+	if !ok {
+		t.Fatalf("tools[0] = %v (%T), want an object", tools[0], tools[0])
+	}
+	loc, ok := web["user_location"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools[0].user_location = %v, want an object", web["user_location"])
+	}
+	if got := loc["type"]; got != "approximate" {
+		t.Errorf("tools[0].user_location.type = %v, want %q -- the API refuses the whole request without it",
+			got, "approximate")
+	}
+	if got := loc["timezone"]; got != "Europe/Bucharest" {
+		t.Errorf("tools[0].user_location.timezone = %v, want the caller's", got)
+	}
+}
+
+// TestWireWebSearchWithNoUserLocationSendsNone_Responses is the other half:
+// the type belongs to a location that exists. A caller who named none must not
+// get an otherwise-empty user_location object carrying only a type.
+func TestWireWebSearchWithNoUserLocationSendsNone_Responses(t *testing.T) {
+	var body map[string]any
+	srv := newResponsesServer(t, &body, responsesOK)
+	defer srv.Close()
+
+	client := NewResponsesLLM(
+		WithResponsesAPIKey("test-key"),
+		WithResponsesBaseURL(srv.URL),
+		WithResponsesModel(llm.Model{APIModel: "gpt-5"}),
+		WithWebSearch(),
+	)
+
+	if _, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil); err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+
+	tools, _ := body["tools"].([]any)
+	if len(tools) == 0 {
+		t.Fatalf("tools = %v, want the web_search tool", body["tools"])
+	}
+	web, _ := tools[0].(map[string]any)
+	if _, present := web["user_location"]; present {
+		t.Errorf("tools[0].user_location = %v, want it absent when the caller named no location",
+			web["user_location"])
+	}
+}
