@@ -400,6 +400,34 @@ func chatFieldsFor(
 	)
 	fields["SupportsStructuredOut"] = boolean(m.feature("structured_outputs"))
 	fields["SupportsImageGeneration"] = boolean(m.emitsModality("image"))
+
+	// What the provider says about the model's life. Read straight through
+	// rather than interpreted: whether a deprecated model should be offered,
+	// hidden, or offered with a warning is a decision for whoever is doing the
+	// offering, and a generator that made it here would make it for everybody.
+	//
+	// Written only when published. An empty string is "the provider says
+	// nothing", which is a different fact from "active" and must not be
+	// flattened into it -- six OpenAI chat entries publish no state at all.
+	setAttr(fields, "State", m.Attrs["state"])
+	setAttr(fields, "ReleaseDate", m.Attrs["release_date"])
+	setAttr(fields, "RetirementDate", m.Attrs["retirement_date"])
+	setAttr(fields, "ReplacedBy", m.Attrs["recommended_replacement"])
+}
+
+// setAttr writes a string field when the source publishes one, and leaves it
+// out when it does not.
+//
+// The absence matters. A field written as "" is indistinguishable in the
+// generated file from one the source published as empty, and for a lifecycle
+// field the difference is "the provider has not said" versus "the provider
+// says nothing is wrong" -- which is exactly the distinction a chooser needs
+// to not hide a model on no evidence.
+func setAttr(fields map[string]string, field, value string) {
+	if value == "" {
+		return
+	}
+	fields[field] = quote(value)
 }
 
 func imageFieldsFor(

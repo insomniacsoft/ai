@@ -41,4 +41,42 @@ type Model struct {
 	SupportsStructuredOut bool `json:"supports_structured_output"`
 	// SupportsImageGeneration indicates if the model can generate images.
 	SupportsImageGeneration bool `json:"supports_image_generation"`
+
+	// State is what the provider says about this model's life: "active",
+	// "deprecated", or empty where the provider publishes nothing.
+	//
+	// Carried because a catalog that lists a deprecated model exactly like a
+	// current one leaves every consumer to guess, and the guesses are worse
+	// than the fact. The alternative -- dropping deprecated models at
+	// generation time -- would break the catalog's other job: a ledger has to
+	// be able to price a model somebody is still being billed for, including
+	// one retired last week. Both jobs are served by carrying the field and
+	// letting each caller decide.
+	State string `json:"state,omitempty"`
+
+	// ReleaseDate is when the provider published this model, as YYYY-MM-DD.
+	// Empty where the provider publishes no date -- which is common for
+	// aliases and for older entries, so an ordering built on it must have an
+	// answer for the empty case rather than sorting those to one end by
+	// accident.
+	ReleaseDate string `json:"release_date,omitempty"`
+
+	// RetirementDate is when the provider stops serving this model, as
+	// YYYY-MM-DD, and is set only for a model with a published end. A caller
+	// pointing somebody at a model can say how long it has left instead of
+	// discovering it on the morning the calls start failing.
+	RetirementDate string `json:"retirement_date,omitempty"`
+
+	// ReplacedBy is the model the provider recommends instead, for a
+	// deprecated entry. It is the provider's own recommendation and not a
+	// judgement made here.
+	ReplacedBy string `json:"replaced_by,omitempty"`
 }
+
+// Deprecated reports whether the provider has marked this model deprecated.
+//
+// A method rather than a comparison at each call site: "deprecated" is one
+// spelling out of the provider's own vocabulary, and a caller writing the
+// string itself is a caller that keeps working when the vocabulary grows a
+// second retired state and silently starts offering those models again.
+func (m Model) Deprecated() bool { return m.State == "deprecated" }
