@@ -54,6 +54,12 @@ var (
 		"ID", "Name", "Provider", "APIModel", "Currency",
 		"CostPer1KCalls",
 	}
+	realtimeFields = []string{
+		"ID", "Name", "Provider", "APIModel", "Currency",
+		"CostPer1MTextIn", "CostPer1MTextInCached", "CostPer1MTextOut",
+		"CostPer1MAudioIn", "CostPer1MAudioInCached", "CostPer1MAudioOut",
+		"CostPer1MImageIn", "CostPer1MImageInCached",
+	}
 	embeddingFields = []string{
 		"ID", "Name", "Provider", "APIModel", "Currency",
 		"CostPer1MTokens", "MaxInputTokens", "EmbeddingDims",

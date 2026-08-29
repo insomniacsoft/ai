@@ -9,6 +9,7 @@ const (
 	ttsImport        = "github.com/joakimcarlsson/ai/tts"
 	sttImport        = "github.com/joakimcarlsson/ai/stt"
 	hostedToolImport = "github.com/joakimcarlsson/ai/hostedtool"
+	realtimeImport   = "github.com/joakimcarlsson/ai/realtime"
 	embeddingsImport = "github.com/joakimcarlsson/ai/embeddings"
 	rerankersImport  = "github.com/joakimcarlsson/ai/rerankers"
 )
@@ -75,6 +76,7 @@ var targets = []target{
 	)),
 
 	hostedTool("openai", "hostedtool/openai", "openai"),
+	realtime("openai", "realtime/openai", "openai"),
 
 	speech("openai", "tts/openai", "openai"),
 	speech("elevenlabs", "tts/elevenlabs", "elevenlabs"),
@@ -144,6 +146,18 @@ func hostedTool(source, dir, pkg string) target {
 			"Rates are per 1000 invocations, in the currency the provider",
 			"bills in. A tool's own tokens are billed separately, at the",
 			"calling model's rates, and are not included here.",
+		))
+}
+
+// realtime is the target for a provider's Realtime models, written into the
+// realtime module's catalog type.
+func realtime(source, dir, pkg string) target {
+	return newTarget(source, kindRealtime, dir, pkg, realtimeImport,
+		"realtime.Model", realtimeFields, doc(
+			"Rates are per 1M tokens, in the currency the provider bills in,",
+			"given per billable class rather than the in/out/cached triple",
+			"the chat catalogs use: a voice session's classes are priced far",
+			"enough apart that one figure would say nothing.",
 		))
 }
 

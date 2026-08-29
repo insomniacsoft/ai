@@ -93,3 +93,19 @@ classes an invoice actually charges for (text/audio/image input, cached or
 not, plus text/audio output), clamping negative deltas at zero.
 `TextCacheHitRate` reports the share of text input served from the
 provider's prefix cache.
+
+`realtime/openai` carries a generated `Model` catalog (`cmd/modelsync`
+mirrors it from the same source every other catalog in the repository
+comes from) with one rate per billable class:
+
+```go
+import realtimeopenai "github.com/joakimcarlsson/ai/realtime/openai"
+
+model := realtimeopenai.Models[realtimeopenai.GPTRealtime]
+rate, found := model.Rate(realtime.ClassAudioInput)
+```
+
+`Model.Rate` returns `(rate, found)` rather than a bare number: a missing
+rate reported as zero would be spend recorded as free. Rates are a default,
+not an authority — a caller that lets an operator state its own rate must
+let that rate win.
