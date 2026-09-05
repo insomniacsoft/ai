@@ -32,6 +32,27 @@ type RetryableError interface {
 	GetRetryAfter() string
 }
 
+// TerminalError marks an error that must NOT be retried, whatever its status
+// code says. It is optional: an error that does not implement it is judged by
+// status code alone, exactly as before.
+//
+// It exists because a status code is not always enough to decide. HTTP 429 is
+// the clear case — it covers both an ordinary rate limit, which clears by
+// waiting, and an account with no money in it, which does not. Retrying the
+// second is not merely useless: with the default eight retries and exponential
+// backoff it puts ~10 minutes of silence in front of a caller who could have
+// been told the truth immediately, and then reports the exhaustion rather than
+// the cause.
+//
+// Vendor packages implement it on the error type they already wrap their SDK
+// errors in, so the decision is made where the provider's own error codes are
+// legible, and [ShouldRetry] stays free of any vendor SDK.
+type TerminalError interface {
+	error
+	// Terminal reports whether retrying this error can ever succeed.
+	Terminal() bool
+}
+
 // GenericRetryableError marks an error retryable with a fixed HTTP status code.
 type GenericRetryableError struct {
 	Err        error
@@ -78,13 +99,29 @@ func ShouldRetry(
 	config RetryConfig,
 ) (bool, int64, error) {
 	if attempts > config.MaxRetries {
+		// %w, NOT a bare message. Without it the cause is destroyed at the
+		// exact moment it is most needed: every errors.As downstream stops
+		// finding the typed error, so a caller that knows how to explain an
+		// exhausted account, an expired key or a content rejection is handed
+		// "maximum retry attempts reached" and can say nothing useful. It
+		// fails silently, on the failure path, which is the worst place for a
+		// defect to be invisible.
 		return false, 0, fmt.Errorf(
-			"maximum retry attempts reached: %d retries",
+			"maximum retry attempts reached: %d retries: %w",
 			config.MaxRetries,
+			err,
 		)
 	}
 
 	if errors.Is(err, io.EOF) {
+		return false, 0, err
+	}
+
+	// Checked BEFORE the status code, because the whole point is to overrule
+	// what the status code implies. Returned as the original error so the
+	// caller sees the cause and not a wrapper.
+	var terminal TerminalError
+	if errors.As(err, &terminal) && terminal.Terminal() {
 		return false, 0, err
 	}
 

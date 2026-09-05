@@ -275,6 +275,31 @@ func (e retryableError) GetRetryAfter() string {
 	return ""
 }
 
+// Terminal implements [llm.TerminalError]: it separates the 429s that clear by
+// waiting from the ones that never will.
+//
+// OpenAI answers a spent account with 429 and an error type of
+// insufficient_quota — the same status code an ordinary rate limit uses. Only
+// the type/code tells them apart, and getting it wrong is expensive in both
+// directions: retrying a zero balance eight times spends ~10 minutes of
+// backoff to arrive at the same refusal, and NOT retrying a real rate limit
+// throws away the request the backoff would have saved.
+//
+// Keyed on the type first, since that is the field OpenAI documents as the
+// error's category, with the two billing codes named explicitly because they
+// have arrived under a bare or differing type.
+func (e retryableError) Terminal() bool {
+	switch e.err.Type {
+	case "insufficient_quota":
+		return true
+	}
+	switch e.err.Code {
+	case "credit_balance_exhausted", "billing_hard_limit_reached", "account_deactivated":
+		return true
+	}
+	return false
+}
+
 func wrapError(err error) error {
 	if err == nil {
 		return nil
