@@ -64,6 +64,12 @@ var (
 	// key cannot succeed, so the connect loop stops rather than hammering.
 	ErrAuthRejected = errors.New("realtime: authentication rejected")
 
+	// ErrOutOfCredit means the provider refused because the account cannot
+	// pay for the session: no credit left, or a spent quota. Like
+	// ErrAuthRejected, retrying cannot succeed, so the connect loop stops
+	// rather than reconnecting into the same refusal forever.
+	ErrOutOfCredit = errors.New("realtime: the account is out of credit")
+
 	// ErrSessionExpired is the provider ending a session at its duration cap.
 	// It is a normal end of life, not a fault: the caller opens a new session
 	// and replays a bounded history.
@@ -460,16 +466,18 @@ func (c *Client) Close() error {
 // connectLoop dials, configures and reads one connection at a time, backing
 // off between attempts and retrying until ctx is done.
 //
-// Authentication rejected by the provider is the one error that stops the
-// loop rather than retrying it: retrying with the same key cannot succeed,
-// and a client that keeps trying turns one wrong character in a config file
-// into a rate-limit incident. A session reaching the provider's own
-// duration cap is a normal end of life rather than a fault: it reconnects
-// at once, skipping the backoff, so the caller can replay a bounded history
-// onto the new session. A connection is configured before its readiness is
-// announced, because an open socket still carries the provider's own
-// default instructions and threshold VAD until session.update is
-// acknowledged.
+// Authentication rejected by the provider, and an account out of credit, are
+// the two errors that stop the loop rather than retrying it: retrying with
+// the same key or the same empty account cannot succeed, and a client that
+// keeps trying turns one wrong character in a config file — or a spent
+// quota — into a rate-limit incident. Both are recorded as fatalErr so
+// WaitReady returns them instead of blocking until the caller's own
+// deadline. A session reaching the provider's own duration cap is a normal
+// end of life rather than a fault: it reconnects at once, skipping the
+// backoff, so the caller can replay a bounded history onto the new session.
+// A connection is configured before its readiness is announced, because an
+// open socket still carries the provider's own default instructions and
+// threshold VAD until session.update is acknowledged.
 func (c *Client) connectLoop(ctx context.Context) {
 	defer close(c.doneCh)
 
@@ -533,6 +541,19 @@ func (c *Client) connectLoop(ctx context.Context) {
 			)
 			c.emit(Event{Kind: EventError, Err: ErrSessionExpired})
 			continue
+		}
+		if errors.Is(readErr, ErrOutOfCredit) || isOutOfCreditText(readErr) {
+			c.logger.Error(
+				"realtime: the account is out of credit; not reconnecting",
+				"error",
+				readErr,
+			)
+			c.mu.Lock()
+			c.fatalErr = readErr
+			c.signalReadyLocked()
+			c.mu.Unlock()
+			c.emit(Event{Kind: EventError, Err: readErr})
+			return
 		}
 		c.logger.Warn("realtime: connection lost", "error", readErr)
 		if !sleepCtx(ctx, b.Next()) {
@@ -711,8 +732,11 @@ func (c *Client) readLoop(ctx context.Context, conn wsConn) error {
 }
 
 // dispatch turns one server event into zero or more Events. It returns a
-// non-nil error only when the connection itself is finished — currently only
-// session expiry, which the connect loop treats as a normal end of life.
+// non-nil error only when the connection itself is finished — currently
+// session expiry, which the connect loop treats as a normal end of life, and
+// an out-of-credit account, which it treats as fatal. Either is returned as
+// an error rather than emitted and swallowed here, because only the connect
+// loop can decide whether to reconnect or stop.
 //
 // Unknown event types are ignored rather than treated as errors: the provider
 // ships its own versions and volunteers events this client never asked for,
@@ -830,6 +854,9 @@ func (c *Client) dispatch(data []byte) error {
 		if ev.Error != nil && isExpiry(ev.Error) {
 			return ErrSessionExpired
 		}
+		if ev.Error != nil && isOutOfCredit(ev.Error) {
+			return fmt.Errorf("%w: %s", ErrOutOfCredit, ev.Error.Message)
+		}
 		c.logger.Warn("realtime: provider error event", "error", err)
 		causedBy := ""
 		if ev.Error != nil {
@@ -939,6 +966,35 @@ func isExpiry(e *serverError) bool {
 			"session expired",
 			"Session expired",
 		)
+}
+
+// isOutOfCredit recognises the provider's own machine-readable codes for an
+// account that cannot pay. Codes, not prose: the message text is written for a
+// human and changes, while these do not.
+func isOutOfCredit(e *serverError) bool {
+	if e == nil {
+		return false
+	}
+	return containsAny(
+		e.Code,
+		"credit_balance_exhausted",
+		"billing_hard_limit_reached",
+	) ||
+		containsAny(e.Type, "insufficient_quota")
+}
+
+// isOutOfCreditText is the same question asked of a websocket close, where
+// there is no structured error at all: the provider states the reason in
+// the close frame, and the transport hands it back as text.
+func isOutOfCreditText(err error) bool {
+	if err == nil {
+		return false
+	}
+	return containsAny(
+		err.Error(),
+		"credit_balance_exhausted",
+		"insufficient_quota",
+	)
 }
 
 // withTurn runs fn against the in-flight state for responseID, creating it
