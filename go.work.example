@@ -69,6 +69,8 @@ use (
 	./realtime
 	./realtime/openai
 
+	./live
+
 	./tools
 	./tools/openai
 
