@@ -141,6 +141,7 @@ Generated price catalogs, not clients: they carry no vendor SDK.
 | `agent` | Agent runtime: chat, streaming, hooks, tools, sub-agents, handoffs, fan-out |
 | `voice` | Voice-first agent: streaming STT → LLM → TTS pipeline with tool calls |
 | `realtime` | OpenAI Realtime API client: one reconnecting speech-to-speech WebSocket session |
+| `live` | OpenAI GPT-Live client: one WebSocket session delegating reasoning and tools to a backend |
 | `memory` | Persistent memory interface, dedup + extraction helpers |
 | `session` | Conversation session storage interfaces and implementations |
 

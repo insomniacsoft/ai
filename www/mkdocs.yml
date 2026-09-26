@@ -75,6 +75,8 @@ nav:
     - Instruction Templates: agent/instruction-templates.md
   - Realtime:
     - Overview: realtime/overview.md
+  - Live:
+    - Overview: live/overview.md
   - Integrations:
     - PostgreSQL: integrations/postgres.md
     - SQLite: integrations/sqlite.md

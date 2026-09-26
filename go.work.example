@@ -70,6 +70,7 @@ use (
 	./hostedtool/openai
 	./realtime
 	./realtime/openai
+	./live
 
 	./llm
 	./llm/anthropic
