@@ -1,0 +1,125 @@
+package openai
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/joakimcarlsson/ai/llm"
+	"github.com/joakimcarlsson/ai/message"
+	"github.com/joakimcarlsson/ai/types"
+)
+
+// A Responses body whose prompt was mostly served from the cache. The API
+// reports input_tokens as the WHOLE prompt and cached_tokens as the part of
+// it that was a cache hit -- a subset, not an addition.
+const responsesCachedBody = `{"id":"resp_c","object":"response","status":"completed",` +
+	`"output":[{"type":"message","role":"assistant",` +
+	`"content":[{"type":"output_text","text":"hi"}]}],` +
+	`"usage":{"input_tokens":1000,"input_tokens_details":{"cached_tokens":800},` +
+	`"output_tokens":50,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":1050}}`
+
+// TestResponsesUsageExcludesCachedFromInput pins the Responses mapping to the
+// same contract as the chat-completions one (Client.usage in openai.go):
+// InputTokens is the UNCACHED input, and CacheReadTokens carries the rest.
+//
+// The two mappings disagreed. Chat completions subtracted the cached share;
+// Responses passed the whole prompt through as InputTokens and ALSO reported
+// the cached share, so a caller pricing InputTokens at the input rate and
+// CacheReadTokens at the cached rate paid for every cached token twice. On a
+// prompt that is 80% cache hits that overstates the input bill about 4x.
+//
+// Negative control, 2026-09-26: with the subtraction removed from
+// responsesClient.usage this test fails on both paths with "InputTokens =
+// 1000, want 200".
+func TestResponsesUsageExcludesCachedFromInput(t *testing.T) {
+	check := func(t *testing.T, u llm.TokenUsage) {
+		t.Helper()
+		if u.InputTokens != 200 {
+			t.Errorf("InputTokens = %d, want 200 (1000 prompt minus 800 cached)", u.InputTokens)
+		}
+		if u.CacheReadTokens != 800 {
+			t.Errorf("CacheReadTokens = %d, want 800", u.CacheReadTokens)
+		}
+		if u.OutputTokens != 50 {
+			t.Errorf("OutputTokens = %d, want 50", u.OutputTokens)
+		}
+		if got := u.InputTokens + u.CacheReadTokens + u.CacheCreationTokens; got != 1000 {
+			t.Errorf("input + cache read + cache write = %d, want the whole prompt, 1000", got)
+		}
+	}
+
+	t.Run("send", func(t *testing.T) {
+		srv := newResponsesServer(t, nil, responsesCachedBody)
+		defer srv.Close()
+		client := NewResponsesLLM(
+			WithResponsesAPIKey("test-key"),
+			WithResponsesBaseURL(srv.URL),
+			WithResponsesModel(llm.Model{APIModel: "gpt-4o-mini"}),
+		)
+		resp, err := client.SendMessages(context.Background(),
+			[]message.Message{message.NewUserMessage("hi")}, nil)
+		if err != nil {
+			t.Fatalf("SendMessages: %v", err)
+		}
+		check(t, resp.Usage)
+	})
+
+	t.Run("stream", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(
+			func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, _ = io.WriteString(w, "event: response.completed\n"+
+					`data: {"type":"response.completed","sequence_number":1,"response":`+
+					responsesCachedBody+"}\n\n")
+			}))
+		defer srv.Close()
+		client := NewResponsesLLM(
+			WithResponsesAPIKey("test-key"),
+			WithResponsesBaseURL(srv.URL),
+			WithResponsesModel(llm.Model{APIModel: "gpt-4o-mini"}),
+		)
+		var final *llm.Response
+		for ev := range client.StreamResponse(context.Background(),
+			[]message.Message{message.NewUserMessage("hi")}, nil) {
+			if ev.Type == types.EventError {
+				t.Fatalf("stream error: %v", ev.Error)
+			}
+			if ev.Type == types.EventComplete {
+				final = ev.Response
+			}
+		}
+		if final == nil {
+			t.Fatal("stream ended without a complete event")
+		}
+		check(t, final.Usage)
+	})
+}
+
+// TestResponsesUsageClampsACachedFigureAboveTheTotal keeps a malformed usage
+// block from producing negative input: a provider that ever reports more
+// cached tokens than prompt tokens gets an understated bill, not a credit.
+// Same rule as realtime.Usage.Billable.
+func TestResponsesUsageClampsACachedFigureAboveTheTotal(t *testing.T) {
+	body := `{"id":"resp_x","object":"response","status":"completed",` +
+		`"output":[{"type":"message","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"hi"}]}],` +
+		`"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":40},"output_tokens":1}}`
+	srv := newResponsesServer(t, nil, body)
+	defer srv.Close()
+	client := NewResponsesLLM(
+		WithResponsesAPIKey("test-key"),
+		WithResponsesBaseURL(srv.URL),
+		WithResponsesModel(llm.Model{APIModel: "gpt-4o-mini"}),
+	)
+	resp, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil)
+	if err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+	if resp.Usage.InputTokens != 0 {
+		t.Errorf("InputTokens = %d, want 0 when cached exceeds the total", resp.Usage.InputTokens)
+	}
+}

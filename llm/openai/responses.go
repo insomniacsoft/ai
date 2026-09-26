@@ -576,10 +576,17 @@ func (c *responsesClient) usage(resp *responses.Response) llm.TokenUsage {
 	if resp == nil {
 		return llm.TokenUsage{}
 	}
+	// The API's input_tokens is the whole prompt and cached_tokens is the
+	// part of it that hit the cache -- a subset. TokenUsage.InputTokens is
+	// the uncached remainder, as the chat-completions mapping (Client.usage)
+	// and the Anthropic adapter report it; passing input_tokens through
+	// unchanged made every cached token count twice. Clamped at zero so a
+	// cached figure above the total understates rather than goes negative.
+	cached := resp.Usage.InputTokensDetails.CachedTokens
 	return llm.TokenUsage{
-		InputTokens:     resp.Usage.InputTokens,
+		InputTokens:     max(resp.Usage.InputTokens-cached, 0),
 		OutputTokens:    resp.Usage.OutputTokens,
-		CacheReadTokens: resp.Usage.InputTokensDetails.CachedTokens,
+		CacheReadTokens: cached,
 	}
 }
 
