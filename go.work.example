@@ -68,6 +68,7 @@ use (
 
 	./hostedtool
 	./hostedtool/openai
+	./live
 
 	./llm
 	./llm/anthropic
