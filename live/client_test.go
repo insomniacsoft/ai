@@ -171,6 +171,29 @@ func setupReadySession(t *testing.T, mutate func(*Config)) (*Client, *websocket.
 
 // ── 1: session.start is the first message ──────────────────────────────
 
+// TestSessionStartPayloadSelectsClientDelegation checks that a session with
+// no Responses backend asks for client delegation explicitly: without the
+// delegation object the provider delegates nothing to the application.
+func TestSessionStartPayloadSelectsClientDelegation(t *testing.T) {
+	_, conn, _ := setupClient(t, nil)
+
+	got := readClientEvent(t, conn)
+	session, ok := got["session"].(map[string]any)
+	if !ok {
+		t.Fatalf("session is not an object: %v", got["session"])
+	}
+	delegation, ok := session["delegation"].(map[string]any)
+	if !ok {
+		t.Fatalf("session.delegation is not an object: %v", session["delegation"])
+	}
+	if delegation["type"] != "client" {
+		t.Errorf("session.delegation.type = %v, want client", delegation["type"])
+	}
+	if _, ok := delegation["responses"]; ok {
+		t.Errorf("session.delegation.responses = %v, want absent", delegation["responses"])
+	}
+}
+
 func TestSessionStartPayload(t *testing.T) {
 	lightTool := fakeTool{info: tool.Info{
 		Name:        "light_off",

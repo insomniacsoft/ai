@@ -69,10 +69,10 @@ type InputMessage struct {
 }
 
 // ResponsesDelegation configures the Responses backend GPT-Live delegates
-// tasks to. A nil *ResponsesDelegation on SessionConfig means client
-// delegation instead — the API's own default — where the application
-// itself receives delegated work and answers it with SendFunctionResult and
-// CreateResponse.
+// tasks to. A nil *ResponsesDelegation on SessionConfig selects client
+// delegation instead, sent as delegation type "client": the application
+// receives each delegated task as EventDelegation and answers it with
+// AppendCommentary or AppendThinking.
 type ResponsesDelegation struct {
 	// Model is the backend Responses model, e.g. "gpt-6-luna". Required.
 	Model string
@@ -113,7 +113,7 @@ type SessionConfig struct {
 	// Input seeds prior conversation history. Defaults to none.
 	Input []InputMessage
 	// Delegation selects the Responses backend. Nil selects client
-	// delegation, the API default.
+	// delegation.
 	Delegation *ResponsesDelegation
 	// Store, when true, makes the session available for forking and
 	// recording download after it ends.
@@ -294,7 +294,9 @@ func (c *Client) buildSessionStart() (sessionStartEvent, error) {
 	if sess.Voice != "" {
 		wire.Audio.Output = &wireAudioOutput{Voice: sess.Voice}
 	}
-	if sess.Delegation != nil {
+	if sess.Delegation == nil {
+		wire.Delegation = &wireDelegation{Type: "client"}
+	} else {
 		tools, err := liveTools(sess.Delegation.Tools)
 		if err != nil {
 			return sessionStartEvent{}, err
