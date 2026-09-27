@@ -92,6 +92,10 @@ type ResponsesDelegation struct {
 	// ReasoningEffort is the backend model's reasoning effort, e.g. "low" or
 	// "high". Empty omits the field.
 	ReasoningEffort string
+	// ServiceTier is the processing tier for delegated Responses requests:
+	// "auto", "default", "flex" or "priority" (Fast mode, where the model and
+	// project support it). Empty omits the field.
+	ServiceTier string
 }
 
 // SessionConfig is the session GPT-Live opens on session.start.
@@ -168,6 +172,7 @@ type wireResponsesDelegation struct {
 	ToolChoice        string             `json:"tool_choice,omitempty"`
 	ParallelToolCalls *bool              `json:"parallel_tool_calls,omitempty"`
 	Reasoning         *wireReasoning     `json:"reasoning,omitempty"`
+	ServiceTier       string             `json:"service_tier,omitempty"`
 }
 
 type wireDelegation struct {
@@ -300,6 +305,7 @@ func (c *Client) buildSessionStart() (sessionStartEvent, error) {
 			Tools:             tools,
 			ToolChoice:        sess.Delegation.ToolChoice,
 			ParallelToolCalls: sess.Delegation.ParallelToolCalls,
+			ServiceTier:       sess.Delegation.ServiceTier,
 		}
 		if sess.Delegation.ReasoningEffort != "" {
 			responses.Reasoning = &wireReasoning{Effort: sess.Delegation.ReasoningEffort}
