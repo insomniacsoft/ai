@@ -240,6 +240,8 @@ func TestSessionStartPayload(t *testing.T) {
 			Tools:             []tool.BaseTool{lightTool},
 			ToolChoice:        "auto",
 			ParallelToolCalls: &parallel,
+			ReasoningEffort:   "minimal",
+			ServiceTier:       "priority",
 		}
 	})
 
@@ -333,6 +335,18 @@ func TestSessionStartPayload(t *testing.T) {
 		t.Errorf(
 			"delegation.responses.parallel_tool_calls = %v, want false",
 			responses["parallel_tool_calls"],
+		)
+	}
+	if responses["service_tier"] != "priority" {
+		t.Errorf(
+			"delegation.responses.service_tier = %v, want priority",
+			responses["service_tier"],
+		)
+	}
+	if reasoning, _ := responses["reasoning"].(map[string]any); reasoning["effort"] != "minimal" {
+		t.Errorf(
+			"delegation.responses.reasoning = %v, want effort minimal",
+			responses["reasoning"],
 		)
 	}
 
