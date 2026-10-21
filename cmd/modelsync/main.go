@@ -112,7 +112,7 @@ func dedupe(t target, sourced []apiModel) ([]model, int) {
 
 	duplicates := 0
 	for _, m := range sourced {
-		id := m.apiID()
+		id := m.APIID()
 		if seen[id] {
 			duplicates++
 			continue

@@ -6,6 +6,8 @@ use (
 	./agent
 	./cmd/llmstxt
 	./cmd/modelsync
+	./modelsync
+	./modelsync/convert
 
 	./types
 	./tracing

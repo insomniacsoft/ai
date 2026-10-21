@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
 	"slices"
-	"sort"
 	"strings"
+
+	"github.com/joakimcarlsson/ai/modelsync"
 )
 
 const (
@@ -19,41 +19,19 @@ const (
 		"model-sync/main/api.json"
 )
 
-// apiIndex is the model-sync api.json document: one entry per provider, each
-// holding every model that provider publishes.
+// apiModel and apiPrice are the module's types: the generator reads the
+// document through the same parser and the same rate selection an application
+// refreshing its catalog at run time uses, so the two cannot disagree about
+// what a model costs.
+type (
+	apiModel = modelsync.Entry
+	apiPrice = modelsync.Price
+)
+
+// apiIndex is every model the model-sync api.json document lists, in document
+// order.
 type apiIndex struct {
-	Providers []apiProvider `json:"providers"`
-}
-
-type apiProvider struct {
-	ID     string     `json:"id"`
-	Name   string     `json:"name"`
-	Models []apiModel `json:"models"`
-}
-
-// apiModel is one model as api.json describes it. Everything beyond the
-// identity fields is carried in the four open maps, so a new key the source
-// starts publishing needs no change here to be readable.
-type apiModel struct {
-	ID       string              `json:"id"`
-	Provider string              `json:"provider"`
-	Name     string              `json:"name"`
-	Kind     string              `json:"kind"`
-	Prices   []apiPrice          `json:"prices"`
-	Attrs    map[string]string   `json:"attrs"`
-	Limits   map[string]int64    `json:"limits"`
-	Lists    map[string][]string `json:"lists"`
-}
-
-// apiPrice is one published rate. The same metric appears many times per
-// model, once per priced combination of tier, region, deployment and the rest,
-// which dims names.
-type apiPrice struct {
-	Metric   string            `json:"metric"`
-	Unit     string            `json:"unit"`
-	Amount   float64           `json:"amount"`
-	Currency string            `json:"currency"`
-	Dims     map[string]string `json:"dims"`
+	entries []apiModel
 }
 
 func fetchIndex(ctx context.Context, url string) (*apiIndex, error) {
@@ -76,256 +54,52 @@ func fetchIndex(ctx context.Context, url string) (*apiIndex, error) {
 		)
 	}
 
-	var index apiIndex
-	if err := json.NewDecoder(resp.Body).Decode(&index); err != nil {
+	res, err := modelsync.Parse(resp.Body)
+	if err != nil {
 		return nil, fmt.Errorf("decoding %s: %w", url, err)
 	}
-	return &index, nil
+	// A model the parser could not read would be absent from the catalog
+	// and reported as removed, so the run stops rather than guess.
+	if len(res.EntryErrors) > 0 {
+		return nil, fmt.Errorf(
+			"decoding %s: %d unreadable model(s), first: %w",
+			url, len(res.EntryErrors), res.EntryErrors[0],
+		)
+	}
+	return &apiIndex{entries: res.Entries}, nil
 }
 
 // models returns the models one provider publishes for one kind.
 func (idx *apiIndex) models(provider, kind string) []apiModel {
 	var out []apiModel
-	for _, p := range idx.Providers {
-		if p.ID != provider {
-			continue
-		}
-		for _, m := range p.Models {
-			if m.Kind == kind {
-				out = append(out, m)
-			}
+	for _, m := range idx.entries {
+		if m.EnclosingProvider == provider && m.Kind == kind {
+			out = append(out, m)
 		}
 	}
 	return out
 }
 
-// apiID is the identifier a request names the model with, which is not always
-// the catalog key api.json files the model under.
-func (m apiModel) apiID() string {
-	if id := m.Attrs["api_id"]; id != "" {
-		return id
-	}
-	return m.ID
-}
-
-func (m apiModel) feature(name string) bool {
-	return slices.Contains(m.Lists["features"], name)
-}
-
-func (m apiModel) anyFeature(names ...string) bool {
-	for _, n := range names {
-		if m.feature(n) {
-			return true
-		}
-	}
-	return false
-}
-
-func (m apiModel) takesModality(names ...string) bool {
-	for _, n := range names {
-		if slices.Contains(m.Lists["input_modalities"], n) {
-			return true
-		}
-	}
-	return false
-}
-
-func (m apiModel) emitsModality(name string) bool {
-	return slices.Contains(m.Lists["output_modalities"], name)
-}
-
-// list returns the first of the named lists the model publishes, so a caller
-// can state a preference order between equivalent keys.
-func (m apiModel) list(keys ...string) []string {
-	for _, k := range keys {
-		if v := m.Lists[k]; len(v) > 0 {
-			return v
-		}
-	}
-	return nil
-}
-
-// limit returns the first of the named limits the model publishes, so a
-// caller can state a preference order between equivalent keys.
-func (m apiModel) limit(keys ...string) int64 {
-	for _, k := range keys {
-		if v := m.Limits[k]; v > 0 {
-			return v
-		}
-	}
-	return 0
-}
-
-// currency is the code the model's rates are quoted in. A provider bills in
-// one currency, so the first rate settles it; a model with no published rate
-// is assumed to be priced in USD.
-func (m apiModel) currency() string {
-	for _, p := range m.Prices {
-		if p.Currency != "" {
-			return p.Currency
-		}
-	}
-	return "USD"
-}
-
-// Unit tables convert a published rate to the unit a catalog field holds. A
-// unit absent from the table means the rate cannot fill that field.
+// The unit tables and rate selection live in the module; these names keep the
+// generator's own code and tests reading as before.
 var (
-	tokenUnits = map[string]float64{
-		"per_1m_tokens": 1,
-		"per_1k_tokens": 1000,
-	}
-	charUnits = map[string]float64{
-		"per_1m_characters": 1,
-		"per_1k_characters": 1000,
-	}
-	minuteUnits = map[string]float64{
-		"per_minute": 1,
-		"per_second": 60,
-		"per_hour":   1.0 / 60,
-	}
-	imageUnits = map[string]float64{"per_image": 1}
-	// callUnits keeps the vendor's own per-1k-calls unit; see CostPer1KCalls.
-	callUnits = map[string]float64{"per_1k_calls": 1}
+	tokenUnits  = modelsync.TokenUnits
+	charUnits   = modelsync.CharUnits
+	minuteUnits = modelsync.MinuteUnits
+	imageUnits  = modelsync.ImageUnits
 )
 
-// variantDims mark a rate as belonging to something other than plain
-// inference: a fine-tune, a training run, a promotion, a rate that has not
-// taken effect yet. None of them describe what a request costs today.
-var variantDims = map[string]bool{
-	"batch":            true,
-	"commitment":       true,
-	"data_logging":     true,
-	"discount":         true,
-	"effective_from":   true,
-	"effective_until":  true,
-	"fine_tuned":       true,
-	"legacy":           true,
-	"method":           true,
-	"model_grader":     true,
-	"plan":             true,
-	"promotional":      true,
-	"service_tier":     true,
-	"stage":            true,
-	"surface":          true,
-	"training":         true,
-	"underlying_model": true,
-}
-
-// defaultDims are the dimension values a rate carries when it describes the
-// ordinary way to call a model. A rate that only pins these is as unqualified
-// as one that pins nothing.
-var defaultDims = map[string]string{
-	"deployment": "global",
-	"modality":   "text",
-	"tier":       "standard",
-}
-
-// rate picks the rate a catalog field should hold from everything the source
-// publishes for a model.
-//
-// Metrics are tried in the given order and the first one with a usable rate
-// wins. Within a metric the least qualified rate wins: a rate that names no
-// region, context band or endpoint describes the model itself, while one that
-// names several describes a corner of its pricing table. Ties go to the lower
-// amount, then to the dimensions in name order, so a run is reproducible.
 func rate(
 	prices []apiPrice,
 	currency string,
 	units map[string]float64,
 	metrics ...string,
 ) (float64, bool) {
-	for _, metric := range metrics {
-		var best apiPrice
-		var bestAmount float64
-		bestScore := -1
-
-		for _, p := range prices {
-			scale, ok := units[p.Unit]
-			if !ok || p.Metric != metric || p.Currency != currency {
-				continue
-			}
-			if !usableDims(p.Dims) {
-				continue
-			}
-
-			amount := p.Amount * scale
-			score := dimScore(p.Dims)
-			if bestScore >= 0 && !better(
-				score, amount, p.Dims,
-				bestScore, bestAmount, best.Dims,
-			) {
-				continue
-			}
-			best, bestAmount, bestScore = p, amount, score
-		}
-
-		if bestScore >= 0 {
-			return bestAmount, true
-		}
-	}
-	return 0, false
+	return modelsync.SelectRate(prices, currency, units, metrics...)
 }
 
-// usableDims rejects a rate that is priced for something other than an
-// ordinary request: a variant of the model, or a tier that has to be asked for.
-func usableDims(dims map[string]string) bool {
-	if tier, ok := dims["tier"]; ok && tier != defaultDims["tier"] {
-		return false
-	}
-	for k := range dims {
-		if variantDims[k] {
-			return false
-		}
-	}
-	return true
-}
-
-// dimScore counts how far a rate is qualified beyond the default way to call
-// the model.
-func dimScore(dims map[string]string) int {
-	score := 0
-	for k, v := range dims {
-		if want, ok := defaultDims[k]; ok && v == want {
-			continue
-		}
-		score++
-	}
-	return score
-}
-
-func better(
-	score int, amount float64, dims map[string]string,
-	bestScore int, bestAmount float64, bestDims map[string]string,
-) bool {
-	if score != bestScore {
-		return score < bestScore
-	}
-	if amount != bestAmount {
-		return amount < bestAmount
-	}
-	return dimKey(dims) < dimKey(bestDims)
-}
-
-func dimKey(dims map[string]string) string {
-	pairs := make([]string, 0, len(dims))
-	for k, v := range dims {
-		pairs = append(pairs, k+"="+v)
-	}
-	sort.Strings(pairs)
-	return strings.Join(pairs, ",")
-}
-
-// withDim narrows a model's rates to those a dimension either names as want or
-// leaves unstated, so an input rate is not filled from an output one.
 func withDim(prices []apiPrice, dim, want string) []apiPrice {
-	out := make([]apiPrice, 0, len(prices))
-	for _, p := range prices {
-		if v, ok := p.Dims[dim]; !ok || v == want {
-			out = append(out, p)
-		}
-	}
-	return out
+	return modelsync.WithDim(prices, dim, want)
 }
 
 // entry converts one source model into the Go literals a catalog entry of the
@@ -336,10 +110,10 @@ func withDim(prices []apiPrice, dim, want string) []apiPrice {
 // regeneration, and target defaults fill it for a model seen for the first
 // time.
 func modelFor(t target, m apiModel) model {
-	currency := m.currency()
+	currency := m.Currency()
 	fields := map[string]string{
 		"Provider": quote(t.provider),
-		"APIModel": quote(m.apiID()),
+		"APIModel": quote(m.APIID()),
 		"Currency": quote(currency),
 	}
 	seed := map[string]string{"Name": quote(t.displayName(m.Name))}
@@ -362,7 +136,7 @@ func modelFor(t target, m apiModel) model {
 	}
 
 	return model{
-		apiModel: m.apiID(),
+		apiModel: m.APIID(),
 		fields:   fields,
 		seed:     seed,
 		owned:    sourceOwned[t.kind],
@@ -374,34 +148,32 @@ func chatFieldsFor(
 	currency string,
 	fields, seed map[string]string,
 ) {
-	setRate(fields, "CostPer1MIn", m.Prices, currency, tokenUnits,
-		"input_tokens", "usage")
-	setRate(fields, "CostPer1MOut", m.Prices, currency, tokenUnits,
-		"output_tokens")
-	setRate(fields, "CostPer1MInCached", m.Prices, currency, tokenUnits,
-		"cached_input_tokens")
-	setRate(fields, "CostPer1MOutCached", m.Prices, currency, tokenUnits,
-		"cache_write_tokens")
+	// The compiled-in llm.Model has no cache-write field, so the catalogs
+	// keep recording the cache-write rate in CostPer1MOutCached as they
+	// always have; the module reports it as the separate rate it is.
+	rates := m.ChatRates()
+	setPublished(fields, "CostPer1MIn", rates.Input)
+	setPublished(fields, "CostPer1MOut", rates.Output)
+	setPublished(fields, "CostPer1MInCached", rates.CacheRead)
+	setPublished(fields, "CostPer1MOutCached", rates.CacheWrite)
 
-	window := m.limit("context_window", "top_provider_context_window")
+	window := m.ContextWindow()
 	setInt(fields, "ContextWindow", window)
 
-	if out := m.limit("max_output_tokens"); out > 0 {
+	if out := m.MaxOutputTokens(); out > 0 {
 		fields["DefaultMaxTokens"] = integer(out)
 	} else if window > 0 {
 		seed["DefaultMaxTokens"] = integer(min(window/4, 8192))
 	}
 
-	fields["CanReason"] = boolean(
-		m.feature("reasoning") ||
-			m.Attrs["reasoning_mandatory"] == "true" ||
-			len(m.Lists["reasoning_efforts"]) > 0,
-	)
-	fields["SupportsAttachments"] = boolean(
-		m.takesModality("image", "audio", "video", "file"),
-	)
-	fields["SupportsStructuredOut"] = boolean(m.feature("structured_outputs"))
-	fields["SupportsImageGeneration"] = boolean(m.emitsModality("image"))
+	// The compiled-in catalogs have no unknown state, so a capability the
+	// source does not publish is recorded as false.
+	reasons, _ := m.CanReason()
+	attachments, _ := m.SupportsAttachments()
+	fields["CanReason"] = boolean(reasons)
+	fields["SupportsAttachments"] = boolean(attachments)
+	fields["SupportsStructuredOut"] = boolean(m.Feature("structured_outputs"))
+	fields["SupportsImageGeneration"] = boolean(m.EmitsModality("image"))
 
 	for field, attr := range lifecycleAttrs {
 		setAttr(fields, field, m.Attrs[attr])
@@ -450,73 +222,29 @@ func imageFieldsFor(
 		seed["Pricing"] = imagePricing(v)
 	}
 
-	setInt(fields, "MaxPromptTokens", m.limit(
+	setInt(fields, "MaxPromptTokens", m.Limit(
 		"max_input_tokens",
 		"context_window",
 		"top_provider_context_window",
 	))
-	setStrings(fields, "SupportedSizes", m.list("sizes", "image_sizes"))
+	setStrings(fields, "SupportedSizes", m.List("sizes", "image_sizes"))
 	setStrings(fields, "SupportedAspectRatios", m.Lists["aspect_ratios"])
 	setStrings(fields, "SupportedQualities", m.Lists["qualities"])
-	fields["SupportsStreaming"] = boolean(m.feature("streaming"))
+	fields["SupportsStreaming"] = boolean(m.Feature("streaming"))
 }
 
 func speechFieldsFor(m apiModel, currency string, fields map[string]string) {
-	setRate(fields, "CostPer1MChars", m.Prices, currency, charUnits,
-		"speech", "audio", "input_characters", "input_tokens", "usage")
-	setInt(fields, "MaxCharacters", m.limit("character_limit"))
+	setPublished(fields, "CostPer1MChars", m.SpeechRate())
+	setInt(fields, "MaxCharacters", m.Limit("character_limit"))
 	setStrings(fields, "SupportedFormats", m.Lists["output_formats"])
-	fields["SupportsStreaming"] = boolean(m.feature("streaming"))
+	fields["SupportsStreaming"] = boolean(m.Feature("streaming"))
 }
 
-// toolFieldsFor reads what one thousand invocations of a hosted tool cost. A
-// tool may publish several standard rates for the same metric, told apart
-// only by their detail dim (web search lists "web search", "image web
-// search" and two "web search preview" rates), so the rate is read from the
-// plain ones first; see plainToolRates.
+// toolFieldsFor reads what one thousand invocations of a hosted tool cost;
+// see modelsync.Entry.ToolRate for how a tool's several standard rates are
+// told apart.
 func toolFieldsFor(m apiModel, currency string, fields map[string]string) {
-	setRate(
-		fields,
-		"CostPer1KCalls",
-		plainToolRates(m),
-		currency,
-		callUnits,
-		"tool_call",
-	)
-}
-
-// plainToolRates narrows a hosted tool's rates to the ones that price the
-// tool itself: a rate with no detail dim, or one whose detail, ignoring a
-// trailing parenthetical such as "(all models)", is the tool's own name or
-// the generic "tool call". A detail naming a variant, such as "image web
-// search" or "web search preview", is not plain. A tool publishing no plain
-// rate keeps all of its rates, for rate's ordinary tie-break to choose from.
-func plainToolRates(m apiModel) []apiPrice {
-	plain := map[string]bool{
-		"tool call":                             true,
-		strings.ToLower(m.Name):                 true,
-		strings.ReplaceAll(m.ID, "-", " "):      true,
-		strings.ReplaceAll(m.apiID(), "-", " "): true,
-	}
-
-	out := make([]apiPrice, 0, len(m.Prices))
-	for _, p := range m.Prices {
-		detail, ok := p.Dims["detail"]
-		if !ok || plain[unqualified(detail)] {
-			out = append(out, p)
-		}
-	}
-	if len(out) == 0 {
-		return m.Prices
-	}
-	return out
-}
-
-// unqualified lowercases a detail dim and drops a trailing parenthetical, so
-// "Web search (all models)" reads as "web search".
-func unqualified(detail string) string {
-	base, _, _ := strings.Cut(detail, "(")
-	return strings.ToLower(strings.TrimSpace(base))
+	setPublished(fields, "CostPer1KCalls", m.ToolRate())
 }
 
 func transcriptionFieldsFor(
@@ -542,17 +270,17 @@ func transcriptionFieldsFor(
 	setStrings(fields, "SupportedFormats", m.Lists["audio_formats"])
 	setStrings(fields, "SupportedResponseFormats", m.Lists["response_formats"])
 	fields["SupportsTimestamps"] = boolean(
-		m.anyFeature("timestamps", "word_timestamps", "utterances"),
+		m.AnyFeature("timestamps", "word_timestamps", "utterances"),
 	)
-	fields["SupportsWordTimestamps"] = boolean(m.feature("word_timestamps"))
+	fields["SupportsWordTimestamps"] = boolean(m.Feature("word_timestamps"))
 	fields["SupportsDiarization"] = boolean(
-		m.anyFeature("speaker_diarization", "diarization"),
+		m.AnyFeature("speaker_diarization", "diarization"),
 	)
 	fields["SupportsTranslation"] = boolean(
-		m.anyFeature("translation", "live_translation"),
+		m.AnyFeature("translation", "live_translation"),
 	)
 	fields["SupportsStreaming"] = boolean(
-		m.anyFeature("streaming", "realtime"),
+		m.AnyFeature("streaming", "realtime"),
 	)
 }
 
@@ -563,7 +291,7 @@ func embeddingFieldsFor(
 ) {
 	setRate(fields, "CostPer1MTokens", m.Prices, currency, tokenUnits,
 		"input_tokens", "usage")
-	setInt(fields, "MaxInputTokens", m.limit(
+	setInt(fields, "MaxInputTokens", m.Limit(
 		"max_tokens_per_request",
 		"context_window",
 		"top_provider_context_window",
@@ -572,7 +300,7 @@ func embeddingFieldsFor(
 		m.Attrs["default_embedding_dimension"],
 	))
 	setInts(fields, "SupportedDimensions", m.Lists["embedding_dimensions"])
-	setInt(fields, "MaxBatchSize", m.limit(
+	setInt(fields, "MaxBatchSize", m.Limit(
 		"max_inputs_per_request",
 		"max_texts_per_call",
 	))
@@ -584,8 +312,8 @@ func embeddingFieldsFor(
 func rerankFieldsFor(m apiModel, currency string, fields map[string]string) {
 	setRate(fields, "CostPer1MTokens", m.Prices, currency, tokenUnits,
 		"input_tokens", "usage")
-	setInt(fields, "MaxQueryTokens", m.limit("max_query_tokens"))
-	setInt(fields, "MaxTotalTokens", m.limit(
+	setInt(fields, "MaxQueryTokens", m.Limit("max_query_tokens"))
+	setInt(fields, "MaxTotalTokens", m.Limit(
 		"context_window",
 		"max_tokens_per_request",
 		"top_provider_context_window",
@@ -606,6 +334,13 @@ func setRate(
 	}
 	fields[field] = amount(v)
 	return true
+}
+
+// setPublished writes a selected rate when the source publishes one.
+func setPublished(fields map[string]string, field string, r modelsync.Rate) {
+	if r.Published {
+		fields[field] = amount(r.Per)
+	}
 }
 
 func setInt(fields map[string]string, field string, v int64) {

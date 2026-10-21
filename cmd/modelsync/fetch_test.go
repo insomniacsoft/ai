@@ -39,7 +39,7 @@ func TestFetchIndexReadsAServedDocument(t *testing.T) {
 	}
 
 	served := index.models("demo", "chat")
-	if len(served) != 1 || served[0].apiID() != "demo-1" {
+	if len(served) != 1 || served[0].APIID() != "demo-1" {
 		t.Fatalf("chat models = %v", served)
 	}
 	if got := index.models("demo", "speech"); len(got) != 1 {
