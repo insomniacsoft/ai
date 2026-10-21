@@ -692,19 +692,25 @@ func webSearchMetadata(citations, searches []map[string]any) map[string]any {
 }
 
 // usage maps a Response's token usage onto [llm.TokenUsage]. The API reports
-// input_tokens as the whole prompt and cached_tokens as the part of it that hit
-// the cache, a subset rather than an addition, so InputTokens holds the
-// uncached remainder, matching Client.usage's chat-completions mapping.
+// input_tokens as the whole prompt, and cached_tokens (read from the cache)
+// and cache_write_tokens (written to it) as parts of it -- subsets rather than
+// additions. InputTokens holds the remainder that was neither, matching
+// Client.usage's chat-completions mapping, so the three add back up to the
+// prompt. A cache write is billed above the input rate on current models, so
+// folding it into InputTokens would understate every first call of a cached
+// prompt.
 func (c *ResponsesClient) usage(resp *responses.Response) llm.TokenUsage {
 	if resp == nil {
 		return llm.TokenUsage{}
 	}
 	cached := resp.Usage.InputTokensDetails.CachedTokens
+	written := resp.Usage.InputTokensDetails.CacheWriteTokens
 	return llm.TokenUsage{
-		InputTokens:     max(resp.Usage.InputTokens-cached, 0),
-		OutputTokens:    resp.Usage.OutputTokens,
-		CacheReadTokens: cached,
-		ReasoningTokens: resp.Usage.OutputTokensDetails.ReasoningTokens,
+		InputTokens:         max(resp.Usage.InputTokens-cached-written, 0),
+		OutputTokens:        resp.Usage.OutputTokens,
+		CacheReadTokens:     cached,
+		CacheCreationTokens: written,
+		ReasoningTokens:     resp.Usage.OutputTokensDetails.ReasoningTokens,
 	}
 }
 

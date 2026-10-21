@@ -934,3 +934,35 @@ func TestWireReasoningEffortOmittedWhenUnset(t *testing.T) {
 			body["reasoning_effort"])
 	}
 }
+
+// TestUsageSeparatesCacheWrites: chat completions report a cache write as
+// prompt_tokens_details.cache_write_tokens, a subset of prompt_tokens like
+// cached_tokens. InputTokens holds only the remainder.
+//
+// Negative control, observed 2026-10-21 before the mapping read
+// cache_write_tokens: "usage = input 400, cache read 600, cache write 0; want
+// 100, 600, 300".
+func TestUsageSeparatesCacheWrites(t *testing.T) {
+	srv := newCompletionServer(t, nil, `{"id":"x","object":"chat.completion",`+
+		`"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},`+
+		`"finish_reason":"stop"}],`+
+		`"usage":{"prompt_tokens":1000,"completion_tokens":10,"total_tokens":1010,`+
+		`"prompt_tokens_details":{"cached_tokens":600,"cache_write_tokens":300}}}`)
+	defer srv.Close()
+
+	client := NewLLM(
+		WithAPIKey("test-key"),
+		WithBaseURL(srv.URL),
+		WithModel(llm.Model{APIModel: "gpt-6-luna"}),
+	)
+	resp, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil)
+	if err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+	u := resp.Usage
+	if u.InputTokens != 100 || u.CacheReadTokens != 600 || u.CacheCreationTokens != 300 {
+		t.Errorf("usage = input %d, cache read %d, cache write %d; want 100, 600, 300",
+			u.InputTokens, u.CacheReadTokens, u.CacheCreationTokens)
+	}
+}
