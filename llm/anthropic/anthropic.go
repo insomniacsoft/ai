@@ -36,6 +36,7 @@ const (
 	ReasoningEffortLow    ReasoningEffort = "low"
 	ReasoningEffortMedium ReasoningEffort = "medium"
 	ReasoningEffortHigh   ReasoningEffort = "high"
+	ReasoningEffortXhigh  ReasoningEffort = "xhigh"
 	ReasoningEffortMax    ReasoningEffort = "max"
 )
 
@@ -330,28 +331,8 @@ func (c *Client) convertMessages(
 			)
 
 		case message.Assistant:
-			blocks := []anthropicsdk.ContentBlockParamUnion{}
-			if msg.Content().String() != "" {
-				blocks = append(
-					blocks,
-					anthropicsdk.NewTextBlock(msg.Content().String()),
-				)
-			}
-
-			for _, toolCall := range msg.ToolCalls() {
-				var inputMap map[string]any
-				if err := json.Unmarshal(
-					[]byte(toolCall.Input),
-					&inputMap,
-				); err != nil {
-					continue
-				}
-				blocks = append(blocks, anthropicsdk.NewToolUseBlock(
-					toolCall.ID, inputMap, toolCall.Name,
-				))
-			}
-
-			if len(blocks) == 0 {
+			blocks, hasContent := assistantBlocks(msg)
+			if !hasContent {
 				slog.Warn(
 					"There is a message without content, investigate, this should not happen",
 				)
@@ -504,6 +485,8 @@ func (c *Client) preparedMessages(
 				outputConfig.Effort = anthropicsdk.OutputConfigEffortMedium
 			case ReasoningEffortHigh:
 				outputConfig.Effort = anthropicsdk.OutputConfigEffortHigh
+			case ReasoningEffortXhigh:
+				outputConfig.Effort = anthropicsdk.OutputConfigEffortXhigh
 			case ReasoningEffortMax:
 				outputConfig.Effort = anthropicsdk.OutputConfigEffortMax
 			}
@@ -616,9 +599,10 @@ func (c *Client) SendMessages(
 
 			content, meta := c.extractContent(*anthropicResponse)
 			resp := &llm.Response{
-				Content:   content,
-				ToolCalls: c.toolCalls(*anthropicResponse),
-				Usage:     c.usage(*anthropicResponse),
+				Content:        content,
+				ReasoningItems: reasoningItems(*anthropicResponse),
+				ToolCalls:      c.toolCalls(*anthropicResponse),
+				Usage:          c.usage(*anthropicResponse),
 				FinishReason: c.finishReason(
 					string(anthropicResponse.StopReason),
 				),
@@ -750,9 +734,10 @@ func (c *Client) runStream(
 		case anthropicsdk.MessageStopEvent:
 			content, meta := c.extractContent(accumulatedMessage)
 			resp := &llm.Response{
-				Content:   content,
-				ToolCalls: c.toolCalls(accumulatedMessage),
-				Usage:     c.usage(accumulatedMessage),
+				Content:        content,
+				ReasoningItems: reasoningItems(accumulatedMessage),
+				ToolCalls:      c.toolCalls(accumulatedMessage),
+				Usage:          c.usage(accumulatedMessage),
 				FinishReason: c.finishReason(
 					string(accumulatedMessage.StopReason),
 				),
@@ -802,6 +787,256 @@ func (c *Client) extractContent(
 		meta = map[string]any{"anthropic.web_search_results": searchResults}
 	}
 	return content, meta
+}
+
+// Marker values for [message.ReasoningContent].Field on parts this adapter
+// produces from Anthropic thinking and redacted_thinking blocks.
+//
+// Field here carries an Anthropic-specific marker. No other provider's adapter
+// recognises it: OpenAI Responses replays only parts with EncryptedContent, and
+// the Chat Completions adapters key on their own Field names and Details.
+// This adapter in turn replays only parts carrying one of these two values, so
+// another provider's reasoning in the same history is never sent as a thinking
+// block. A consumer that replays history across providers, or into a later
+// turn, must strip Anthropic reasoning parts first (see [IsAnthropicReasoning]);
+// Hearth does so when it loads history. A thinking signature binds the whole
+// conversation before it, so a block outside its own tool loop is not valid
+// input anyway.
+const (
+	ReasoningFieldThinking         = "anthropic.thinking"
+	ReasoningFieldRedactedThinking = "anthropic.redacted_thinking"
+)
+
+// IsAnthropicReasoning reports whether rc is a thinking or redacted_thinking
+// block captured by this adapter.
+func IsAnthropicReasoning(rc message.ReasoningContent) bool {
+	return rc.Field == ReasoningFieldThinking ||
+		rc.Field == ReasoningFieldRedactedThinking
+}
+
+// Layout tokens recorded on the first reasoning item of a response. The
+// sequence is the response's block order, so replay can send the blocks back
+// in the order the API returned them: a thinking signature is verified against
+// the blocks around it, so a reordered replay is not "unchanged".
+const (
+	layoutReasoning = "reasoning" // the next reasoning item, thinking or redacted
+	layoutText      = "text"
+	layoutToolUse   = "tool_use:" // followed by the tool_use id
+)
+
+// thinkingDetails is the stored form of a thinking block in
+// [message.ReasoningContent].Details: what the part's Text cannot carry. The
+// thinking text itself lives only in Text (Opus 5.5 returns it empty, with a
+// signature), and the first item also records the response's block layout.
+type thinkingDetails struct {
+	Type      string   `json:"type"`
+	Signature string   `json:"signature,omitempty"`
+	Data      string   `json:"data,omitempty"`
+	Layout    []string `json:"layout,omitempty"`
+}
+
+// reasoningItems captures the response's thinking and redacted_thinking blocks,
+// in order, so the agent loop can carry them to the next request of a tool
+// loop. A thinking block with no signature cannot be replayed and is dropped.
+// The first item also records the response's block layout.
+func reasoningItems(msg anthropicsdk.Message) []message.ReasoningContent {
+	var items []message.ReasoningContent
+	var layout []string
+	for _, block := range msg.Content {
+		switch v := block.AsAny().(type) {
+		case anthropicsdk.ThinkingBlock:
+			if v.Signature == "" {
+				continue
+			}
+			// The thinking text lives once, in the part's Text; Details holds
+			// only what Text cannot: the signature and the layout.
+			details, err := json.Marshal(thinkingDetails{
+				Type: "thinking", Signature: v.Signature,
+			})
+			if err != nil {
+				continue
+			}
+			items = append(items, message.ReasoningContent{
+				Text:    v.Thinking,
+				Field:   ReasoningFieldThinking,
+				Details: details,
+			})
+			layout = append(layout, layoutReasoning)
+		case anthropicsdk.RedactedThinkingBlock:
+			details, err := json.Marshal(thinkingDetails{
+				Type: "redacted_thinking", Data: v.Data,
+			})
+			if err != nil {
+				continue
+			}
+			items = append(items, message.ReasoningContent{
+				Field:   ReasoningFieldRedactedThinking,
+				Details: details,
+			})
+			layout = append(layout, layoutReasoning)
+		case anthropicsdk.TextBlock:
+			layout = append(layout, layoutText)
+		case anthropicsdk.ToolUseBlock:
+			layout = append(layout, layoutToolUse+v.ID)
+		}
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	var first thinkingDetails
+	if err := json.Unmarshal(items[0].Details, &first); err == nil {
+		first.Layout = layout
+		if details, err := json.Marshal(first); err == nil {
+			items[0].Details = details
+		}
+	}
+	return items
+}
+
+// replayThinkingBlocks rebuilds request thinking blocks from the Anthropic
+// reasoning parts of an assistant message, unchanged and in order, together
+// with the block layout recorded on the first of them (nil when absent).
+func replayThinkingBlocks(
+	parts []message.ReasoningContent,
+) (blocks []anthropicsdk.ContentBlockParamUnion, layout []string) {
+	for _, part := range parts {
+		if !IsAnthropicReasoning(part) {
+			continue
+		}
+		var d thinkingDetails
+		if err := json.Unmarshal(part.Details, &d); err != nil {
+			continue
+		}
+		if len(blocks) == 0 && layout == nil {
+			layout = d.Layout
+		}
+		switch {
+		case d.Type == "thinking" && d.Signature != "":
+			// An empty Text is sent as thinking "": Opus 5.5 omits the
+			// displayed thinking and returns only the signature, and the API
+			// accepts the block back in that shape.
+			blocks = append(
+				blocks,
+				anthropicsdk.NewThinkingBlock(d.Signature, part.Text),
+			)
+		case d.Type == "redacted_thinking" && d.Data != "":
+			blocks = append(blocks, anthropicsdk.NewRedactedThinkingBlock(d.Data))
+		}
+	}
+	return blocks, layout
+}
+
+// assistantBlocks builds the content blocks of an assistant message. When the
+// message carries a recorded layout that matches its replayable thinking
+// blocks and tool calls, blocks go out in the order the API returned them.
+// Otherwise thinking goes first, then text, then tool use, which is the order
+// the API accepts for a plain tool loop. hasContent is false when the message
+// has no text and no tool use (thinking alone is not a message to send).
+//
+// Text is one merged block, placed at the position of the first text block.
+// Merging is how the message carries text (a single [message.TextContent]
+// reaches here) and it only loses fidelity when a response split its text
+// around other blocks; that split is not reconstructed.
+func assistantBlocks(
+	msg message.Message,
+) (blocks []anthropicsdk.ContentBlockParamUnion, hasContent bool) {
+	thinking, layout := replayThinkingBlocks(msg.ReasoningContent())
+
+	var text anthropicsdk.ContentBlockParamUnion
+	haveText := msg.Content().String() != ""
+	if haveText {
+		text = anthropicsdk.NewTextBlock(msg.Content().String())
+	}
+	// toolIDs and toolBlocks are parallel slices, one entry per call in the
+	// message's order, so two calls that share an id each keep their own
+	// input rather than collapsing into one.
+	var toolIDs []string
+	var toolBlocks []anthropicsdk.ContentBlockParamUnion
+	for _, toolCall := range msg.ToolCalls() {
+		var inputMap map[string]any
+		if err := json.Unmarshal([]byte(toolCall.Input), &inputMap); err != nil {
+			continue
+		}
+		toolIDs = append(toolIDs, toolCall.ID)
+		toolBlocks = append(toolBlocks, anthropicsdk.NewToolUseBlock(
+			toolCall.ID, inputMap, toolCall.Name,
+		))
+	}
+	hasContent = haveText || len(toolIDs) > 0
+
+	if ordered, ok := orderByLayout(
+		layout, thinking, text, haveText, toolIDs, toolBlocks,
+	); ok {
+		return ordered, hasContent
+	}
+
+	blocks = append(blocks, thinking...)
+	if haveText {
+		blocks = append(blocks, text)
+	}
+	blocks = append(blocks, toolBlocks...)
+	return blocks, hasContent
+}
+
+// orderByLayout arranges blocks as the recorded layout says. It reports false
+// when the layout is absent or disagrees with the message: a different number
+// of thinking blocks, a different sequence of tool ids, or text with no text
+// slot, in which case the caller falls back to thinking first.
+func orderByLayout(
+	layout []string,
+	thinking []anthropicsdk.ContentBlockParamUnion,
+	text anthropicsdk.ContentBlockParamUnion,
+	haveText bool,
+	toolIDs []string,
+	toolBlocks []anthropicsdk.ContentBlockParamUnion,
+) ([]anthropicsdk.ContentBlockParamUnion, bool) {
+	if len(layout) == 0 {
+		return nil, false
+	}
+	var layoutTools []string
+	reasoningSlots, textSlots := 0, 0
+	for _, token := range layout {
+		switch {
+		case token == layoutReasoning:
+			reasoningSlots++
+		case token == layoutText:
+			textSlots++
+		case strings.HasPrefix(token, layoutToolUse):
+			layoutTools = append(layoutTools, strings.TrimPrefix(token, layoutToolUse))
+		default:
+			return nil, false
+		}
+	}
+	if reasoningSlots != len(thinking) || (haveText && textSlots == 0) ||
+		len(layoutTools) != len(toolIDs) {
+		return nil, false
+	}
+	for i := range toolIDs {
+		if layoutTools[i] != toolIDs[i] {
+			return nil, false
+		}
+	}
+
+	var out []anthropicsdk.ContentBlockParamUnion
+	nextThinking, nextTool, textPlaced := 0, 0, false
+	for _, token := range layout {
+		switch {
+		case token == layoutReasoning:
+			out = append(out, thinking[nextThinking])
+			nextThinking++
+		case token == layoutText:
+			if haveText && !textPlaced {
+				out = append(out, text)
+				textPlaced = true
+			}
+		default:
+			// The tool-id sequence was checked equal above, so the next tool
+			// token is the next call.
+			out = append(out, toolBlocks[nextTool])
+			nextTool++
+		}
+	}
+	return out, true
 }
 
 func (c *Client) toolCalls(msg anthropicsdk.Message) []message.ToolCall {
@@ -1213,9 +1448,10 @@ func (c *Client) SendMessagesWithStructuredOutput(
 
 			content, meta := c.extractContent(*anthropicResponse)
 			resp := &llm.Response{
-				Content:   content,
-				ToolCalls: c.toolCalls(*anthropicResponse),
-				Usage:     c.usage(*anthropicResponse),
+				Content:        content,
+				ReasoningItems: reasoningItems(*anthropicResponse),
+				ToolCalls:      c.toolCalls(*anthropicResponse),
+				Usage:          c.usage(*anthropicResponse),
 				FinishReason: c.finishReason(
 					string(anthropicResponse.StopReason),
 				),
