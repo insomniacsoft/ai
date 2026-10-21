@@ -125,3 +125,38 @@ func TestResponsesUsageClampsACachedFigureAboveTheTotal(t *testing.T) {
 		)
 	}
 }
+
+// TestResponsesUsageSeparatesCacheWrites: current models bill a cache write
+// above the input rate (1.25x on the GPT-6 family), and the API reports it as
+// input_tokens_details.cache_write_tokens, another subset of input_tokens. The
+// shape is the one the API returned on 2026-10-21 for an 8026-token prompt's
+// first call. InputTokens must hold only what was neither read from nor
+// written to the cache, so the three add back up to the prompt.
+//
+// Negative control, observed 2026-10-21 before the mapping read
+// cache_write_tokens: "usage = input 8026, cache write 0, cache read 0; want
+// 3, 8023, 0".
+func TestResponsesUsageSeparatesCacheWrites(t *testing.T) {
+	body := `{"id":"resp_w","object":"response","status":"completed",` +
+		`"output":[{"type":"message","role":"assistant",` +
+		`"content":[{"type":"output_text","text":"hi"}]}],` +
+		`"usage":{"input_tokens":8026,"input_tokens_details":{"cache_write_tokens":8023,"cached_tokens":0},` +
+		`"output_tokens":29,"output_tokens_details":{"reasoning_tokens":22},"total_tokens":8055}}`
+	srv := newResponsesServer(t, nil, body)
+	defer srv.Close()
+	client := NewResponsesLLM(
+		WithResponsesAPIKey("test-key"),
+		WithResponsesBaseURL(srv.URL),
+		WithResponsesModel(llm.Model{APIModel: "gpt-6-luna"}),
+	)
+	resp, err := client.SendMessages(context.Background(),
+		[]message.Message{message.NewUserMessage("hi")}, nil)
+	if err != nil {
+		t.Fatalf("SendMessages: %v", err)
+	}
+	u := resp.Usage
+	if u.InputTokens != 3 || u.CacheCreationTokens != 8023 || u.CacheReadTokens != 0 {
+		t.Errorf("usage = input %d, cache write %d, cache read %d; want 3, 8023, 0",
+			u.InputTokens, u.CacheCreationTokens, u.CacheReadTokens)
+	}
+}

@@ -1176,12 +1176,16 @@ func (c *Client) usage(completion openaisdk.ChatCompletion) llm.TokenUsage {
 		!completion.Usage.CompletionTokensDetails.JSON.ReasoningTokens.Valid() {
 		outputTokens += reasoningTokens
 	}
-	inputTokens := completion.Usage.PromptTokens - cachedTokens
+	// cache_write_tokens is, like cached_tokens, a part of prompt_tokens; it
+	// is billed above the input rate on current models, so it is reported on
+	// its own rather than left inside InputTokens.
+	writtenTokens := completion.Usage.PromptTokensDetails.CacheWriteTokens
+	inputTokens := max(completion.Usage.PromptTokens-cachedTokens-writtenTokens, 0)
 
 	return llm.TokenUsage{
 		InputTokens:         inputTokens,
 		OutputTokens:        outputTokens,
-		CacheCreationTokens: 0,
+		CacheCreationTokens: writtenTokens,
 		CacheReadTokens:     cachedTokens,
 		ReasoningTokens:     reasoningTokens,
 	}
