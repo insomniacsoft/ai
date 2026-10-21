@@ -39,6 +39,7 @@ const (
 	ReasoningEffortMedium  ReasoningEffort = "medium"
 	ReasoningEffortHigh    ReasoningEffort = "high"
 	ReasoningEffortXhigh   ReasoningEffort = "xhigh"
+	ReasoningEffortMax     ReasoningEffort = "max"
 )
 
 // Options configures the OpenAI LLM client.
@@ -61,12 +62,24 @@ type Options struct {
 	parallelToolCalls      *bool
 	toolChoice             *llm.ToolChoice
 	extraBodyFields        map[string]any
+	reasoningBodyFields    map[string]any
 	metadataFields         map[string]string
 	httpClient             *http.Client
 	logitBias              map[string]int
 	topLogprobs            *int
 	n                      *int64
-	reasoningContentReplay bool
+	reasoningContentReplay *bool
+	reasoningReplayDefault func(llm.Model) bool
+	reasoningDetailsReplay bool
+	modelBodyFields        []modelBodyField
+	separateReasoningUsage bool
+}
+
+// modelBodyField is a request body field sent only for matching models.
+type modelBodyField struct {
+	matches func(llm.Model) bool
+	key     string
+	value   any
 }
 
 // Option configures Options.
@@ -126,9 +139,41 @@ func WithBaseURL(
 	return func(o *Options) { o.baseURL = baseURL }
 }
 
-// WithReasoningContentReplay enables echoing previous reasoning content back in assistant messages.
+// WithReasoningContentReplay enables or disables echoing previous reasoning
+// text back in assistant messages. The text is sent under the field it was
+// received in, defaulting to reasoning_content. An explicit setting overrides
+// any provider default from [WithReasoningReplayDefault].
 func WithReasoningContentReplay(enable bool) Option {
-	return func(o *Options) { o.reasoningContentReplay = enable }
+	return func(o *Options) { o.reasoningContentReplay = &enable }
+}
+
+// WithReasoningReplayDefault sets whether plaintext reasoning replay is on for
+// the selected model when [WithReasoningContentReplay] was not called.
+// Provider packages use it to apply documented model requirements.
+func WithReasoningReplayDefault(matches func(llm.Model) bool) Option {
+	return func(o *Options) { o.reasoningReplayDefault = matches }
+}
+
+// WithReasoningDetailsReplay enables echoing a previous response's structured
+// reasoning_details array back unchanged in assistant messages. When present
+// it is sent instead of the plaintext reasoning field.
+func WithReasoningDetailsReplay(enable bool) Option {
+	return func(o *Options) { o.reasoningDetailsReplay = enable }
+}
+
+// WithModelRequestJSONField sets a request body field sent only when matches
+// reports true for the selected model. It accepts SDK JSON paths.
+func WithModelRequestJSONField(
+	matches func(llm.Model) bool,
+	key string,
+	value any,
+) Option {
+	return func(o *Options) {
+		o.modelBodyFields = append(
+			o.modelBodyFields,
+			modelBodyField{matches: matches, key: key, value: value},
+		)
+	}
 }
 
 // WithExtraHeaders adds custom HTTP headers to API requests.
@@ -149,7 +194,9 @@ func WithHTTPClient(c *http.Client) Option {
 // WithDisableCache disables response caching for OpenAI requests.
 func WithDisableCache() Option { return func(o *Options) { o.disableCache = true } }
 
-// WithReasoningEffort sets the reasoning effort level for OpenAI o-series models.
+// WithReasoningEffort sets effort for reasoning models. None disables reasoning
+// on models that accept it; supported values vary by model. Unset uses the
+// provider default, and models without CanReason ignore this option.
 func WithReasoningEffort(effort ReasoningEffort) Option {
 	return func(o *Options) { o.reasoningEffort = &effort }
 }
@@ -220,11 +267,35 @@ func WithToolChoice(choice llm.ToolChoice) Option {
 // custom base URL targets a provider that accepts them.
 func WithRequestJSONField(key string, value any) Option {
 	return func(o *Options) {
-		if o.extraBodyFields == nil {
-			o.extraBodyFields = make(map[string]any)
-		}
-		o.extraBodyFields[key] = value
+		o.extraBodyFields = setJSONField(o.extraBodyFields, key, value)
 	}
+}
+
+// WithSeparateReasoningUsage marks a compatible provider whose top-level
+// reasoning_tokens are additional to completion_tokens. They are folded into
+// OutputTokens once, preserving ReasoningTokens as a subset of total output.
+// Providers with a different reasoning price require provider billing data
+// rather than a single output-token rate to calculate exact costs.
+func WithSeparateReasoningUsage() Option {
+	return func(o *Options) { o.separateReasoningUsage = true }
+}
+
+// WithReasoningJSONField sets a provider-specific reasoning field, emitted
+// only when the selected model has CanReason. Like WithRequestJSONField, it
+// accepts SDK JSON paths, such as "reasoning.enabled". Unset sends nothing.
+func WithReasoningJSONField(key string, value any) Option {
+	return func(o *Options) {
+		o.reasoningBodyFields = setJSONField(o.reasoningBodyFields, key, value)
+	}
+}
+
+// setJSONField allocates fields when needed and stores a JSON path value.
+func setJSONField(fields map[string]any, key string, value any) map[string]any {
+	if fields == nil {
+		fields = make(map[string]any)
+	}
+	fields[key] = value
+	return fields
 }
 
 // WithResponseMetadataField surfaces a response field into
@@ -425,13 +496,8 @@ func (c *Client) convertMessages(
 				}
 			}
 
-			if c.options.reasoningContentReplay {
-				rcs := msg.ReasoningContent()
-				if len(rcs) > 0 && rcs[0].Text != "" {
-					assistantMsg.SetExtraFields(map[string]any{
-						"reasoning_content": rcs[0].Text,
-					})
-				}
+			if fields := c.replayFields(msg); fields != nil {
+				assistantMsg.SetExtraFields(fields)
 			}
 
 			if len(msg.ToolCalls()) > 0 {
@@ -624,6 +690,8 @@ func (c *Client) preparedParams(
 			params.ReasoningEffort = shared.ReasoningEffortHigh
 		case ReasoningEffortXhigh:
 			params.ReasoningEffort = shared.ReasoningEffortXhigh
+		case ReasoningEffortMax:
+			params.ReasoningEffort = shared.ReasoningEffortMax
 		}
 	}
 
@@ -647,7 +715,56 @@ func (c *Client) requestOptions() []option.RequestOption {
 	for k, v := range c.options.extraBodyFields {
 		opts = append(opts, option.WithJSONSet(k, v))
 	}
+	if c.options.model.CanReason {
+		for k, v := range c.options.reasoningBodyFields {
+			opts = append(opts, option.WithJSONSet(k, v))
+		}
+	}
+	for _, f := range c.options.modelBodyFields {
+		if f.matches(c.options.model) {
+			opts = append(opts, option.WithJSONSet(f.key, f.value))
+		}
+	}
 	return opts
+}
+
+// replaysReasoningText reports whether assistant reasoning text is echoed,
+// preferring the caller's explicit setting over the provider default.
+func (c *Client) replaysReasoningText() bool {
+	if c.options.reasoningContentReplay != nil {
+		return *c.options.reasoningContentReplay
+	}
+	return c.options.reasoningReplayDefault != nil &&
+		c.options.reasoningReplayDefault(c.options.model)
+}
+
+// replayFields builds the extra assistant message fields that carry earlier
+// reasoning back to the provider, or nil when nothing is replayed.
+func (c *Client) replayFields(msg message.Message) map[string]any {
+	items := msg.ReasoningContent()
+	if c.options.reasoningDetailsReplay {
+		for _, item := range items {
+			if len(item.Details) > 0 {
+				return map[string]any{
+					"reasoning_details": item.Details,
+				}
+			}
+		}
+	}
+	if !c.replaysReasoningText() {
+		return nil
+	}
+	for _, item := range items {
+		if item.Text == "" {
+			continue
+		}
+		field := item.Field
+		if field == "" {
+			field = "reasoning_content"
+		}
+		return map[string]any{field: item.Text}
+	}
+	return nil
 }
 
 // requestOptionsInto returns the per-call request options plus a hook that
@@ -712,11 +829,16 @@ func (c *Client) SendMessages(
 				finishReason = message.FinishReasonToolUse
 			}
 
-			reasoning := reasoningForChoice(openaiResponse.Choices[0])
+			reasoning, field := reasoningForChoice(openaiResponse.Choices[0])
 
 			resp := &llm.Response{
-				Content:          content,
-				Reasoning:        reasoning,
+				Content:   content,
+				Reasoning: reasoning,
+				ReasoningItems: chatReasoningItems(
+					reasoning,
+					field,
+					reasoningDetailsForChoice(openaiResponse.Choices[0]),
+				),
 				ToolCalls:        toolCalls,
 				Usage:            c.usage(*openaiResponse),
 				FinishReason:     finishReason,
@@ -801,6 +923,8 @@ func (c *Client) runStream(
 	acc := openaisdk.ChatCompletionAccumulator{}
 	currentContent := ""
 	thinkingText := ""
+	thinkingField := ""
+	var detailItems []json.RawMessage
 	toolCalls := make([]message.ToolCall, 0)
 
 	var topExtras, usageExtras map[string]respjson.Field
@@ -808,20 +932,33 @@ func (c *Client) runStream(
 	for openaiStream.Next() {
 		chunk := openaiStream.Current()
 		acc.AddChunk(chunk)
+		if chunk.Usage.CompletionTokensDetails.JSON.ReasoningTokens.Valid() {
+			acc.Usage.CompletionTokensDetails.JSON.ReasoningTokens =
+				chunk.Usage.CompletionTokensDetails.JSON.ReasoningTokens
+		}
 
 		if len(c.options.metadataFields) > 0 {
 			topExtras = mergeExtras(topExtras, chunk.JSON.ExtraFields)
-			usageExtras = mergeExtras(usageExtras, chunk.Usage.JSON.ExtraFields)
 		}
+		usageExtras = mergeExtras(usageExtras, chunk.Usage.JSON.ExtraFields)
 
 		for _, choice := range chunk.Choices {
-			for _, key := range []string{"reasoning", "reasoning_content"} {
+			if field, ok := choice.Delta.JSON.ExtraFields["reasoning_details"]; ok {
+				var items []json.RawMessage
+				if json.Unmarshal([]byte(field.Raw()), &items) == nil {
+					detailItems = append(detailItems, items...)
+				}
+			}
+			for _, key := range reasoningFieldNames {
 				if field, ok := choice.Delta.JSON.ExtraFields[key]; ok &&
 					field.Raw() != "" {
 					var rc string
 					if json.Unmarshal([]byte(field.Raw()), &rc) == nil &&
 						rc != "" {
 						thinkingText += rc
+						if thinkingField == "" {
+							thinkingField = key
+						}
 						eventChan <- llm.Event{
 							Type:     types.EventThinkingDelta,
 							Thinking: rc,
@@ -857,9 +994,15 @@ func (c *Client) runStream(
 			finishReason = message.FinishReasonToolUse
 		}
 
+		acc.Usage.JSON.ExtraFields = usageExtras
 		resp := &llm.Response{
-			Content:          currentContent,
-			Reasoning:        thinkingText,
+			Content:   currentContent,
+			Reasoning: thinkingText,
+			ReasoningItems: chatReasoningItems(
+				thinkingText,
+				thinkingField,
+				mergeReasoningDetails(detailItems),
+			),
 			ToolCalls:        toolCalls,
 			Usage:            c.usage(acc.ChatCompletion),
 			FinishReason:     finishReason,
@@ -902,23 +1045,63 @@ func (c *Client) toolCallsForChoice(
 	return toolCalls
 }
 
-// reasoningForChoice extracts the reasoning content from a choice's extra fields.
-// Returns an empty string if no reasoning fields are present.
+// reasoningForChoice extracts the reasoning content from a choice's extra
+// fields and the name of the field it arrived in. Both are empty when no
+// reasoning field is present.
 func reasoningForChoice(
 	choice openaisdk.ChatCompletionChoice,
-) string {
-	for _, key := range []string{"reasoning", "reasoning_content"} {
+) (string, string) {
+	for _, key := range reasoningFieldNames {
 		if f, ok := choice.Message.JSON.ExtraFields[key]; ok {
 			raw := f.Raw()
 			if raw != "" && raw != "null" {
 				var rc string
 				if json.Unmarshal([]byte(raw), &rc) == nil && rc != "" {
-					return rc
+					return rc, key
 				}
 			}
 		}
 	}
-	return ""
+	return "", ""
+}
+
+// reasoningFieldNames lists the Chat Completions fields that carry reasoning
+// text, in lookup order.
+var reasoningFieldNames = []string{"reasoning", "reasoning_content"}
+
+// reasoningDetailsForChoice returns a choice's reasoning_details array
+// verbatim, or nil when it is absent or empty.
+func reasoningDetailsForChoice(
+	choice openaisdk.ChatCompletionChoice,
+) json.RawMessage {
+	f, ok := choice.Message.JSON.ExtraFields["reasoning_details"]
+	if !ok {
+		return nil
+	}
+	return nonEmptyJSONArray(f.Raw())
+}
+
+// nonEmptyJSONArray returns raw when it is a JSON array with elements.
+func nonEmptyJSONArray(raw string) json.RawMessage {
+	var items []json.RawMessage
+	if json.Unmarshal([]byte(raw), &items) != nil || len(items) == 0 {
+		return nil
+	}
+	return json.RawMessage(raw)
+}
+
+// chatReasoningItems packages Chat Completions reasoning for message history,
+// or returns nil when the response carried none.
+func chatReasoningItems(
+	text, field string,
+	details json.RawMessage,
+) []message.ReasoningContent {
+	if text == "" && len(details) == 0 {
+		return nil
+	}
+	return []message.ReasoningContent{
+		{Text: text, Field: field, Details: details},
+	}
 }
 
 // logProbsForChoice maps a choice's logprobs.content block to the
@@ -975,24 +1158,32 @@ func (c *Client) buildChoices(
 	return choices
 }
 
+// usage maps completion totals and reported reasoning-token details.
 func (c *Client) usage(completion openaisdk.ChatCompletion) llm.TokenUsage {
 	cachedTokens := completion.Usage.PromptTokensDetails.CachedTokens
 	if cachedTokens == 0 {
-		// DeepSeek reports cache hits as a top-level usage field rather than in
-		// prompt_tokens_details; the SDK captures it as an extra field.
 		cachedTokens = extraUsageInt(
 			completion.Usage,
 			"prompt_cache_hit_tokens",
 		)
 	}
+	reasoningTokens := completion.Usage.CompletionTokensDetails.ReasoningTokens
+	if !completion.Usage.CompletionTokensDetails.JSON.ReasoningTokens.Valid() {
+		reasoningTokens = extraUsageInt(completion.Usage, "reasoning_tokens")
+	}
+	outputTokens := completion.Usage.CompletionTokens
+	if c.options.separateReasoningUsage &&
+		!completion.Usage.CompletionTokensDetails.JSON.ReasoningTokens.Valid() {
+		outputTokens += reasoningTokens
+	}
 	inputTokens := completion.Usage.PromptTokens - cachedTokens
 
 	return llm.TokenUsage{
 		InputTokens:         inputTokens,
-		OutputTokens:        completion.Usage.CompletionTokens,
+		OutputTokens:        outputTokens,
 		CacheCreationTokens: 0,
 		CacheReadTokens:     cachedTokens,
-		ReasoningTokens:     completion.Usage.CompletionTokensDetails.ReasoningTokens,
+		ReasoningTokens:     reasoningTokens,
 	}
 }
 
@@ -1166,11 +1357,16 @@ func (c *Client) SendMessagesWithStructuredOutput(
 				finishReason = message.FinishReasonToolUse
 			}
 
-			reasoning := reasoningForChoice(openaiResponse.Choices[0])
+			reasoning, field := reasoningForChoice(openaiResponse.Choices[0])
 
 			resp := &llm.Response{
-				Content:                    content,
-				Reasoning:                  reasoning,
+				Content:   content,
+				Reasoning: reasoning,
+				ReasoningItems: chatReasoningItems(
+					reasoning,
+					field,
+					reasoningDetailsForChoice(openaiResponse.Choices[0]),
+				),
 				ToolCalls:                  toolCalls,
 				Usage:                      c.usage(*openaiResponse),
 				FinishReason:               finishReason,
@@ -1220,4 +1416,59 @@ func (c *Client) StreamResponseWithStructuredOutput(
 	}()
 
 	return eventChan
+}
+
+// mergeReasoningDetails joins streamed reasoning_details fragments into one
+// array. Consecutive fragments sharing a type and index continue one block, so
+// their text, summary and data are concatenated and later scalar fields such
+// as the signature replace earlier ones. Every other item is kept verbatim.
+func mergeReasoningDetails(items []json.RawMessage) json.RawMessage {
+	if len(items) == 0 {
+		return nil
+	}
+	merged := make([]json.RawMessage, 0, len(items))
+	var last map[string]any
+	for _, raw := range items {
+		var cur map[string]any
+		if json.Unmarshal(raw, &cur) != nil {
+			merged = append(merged, raw)
+			last = nil
+			continue
+		}
+		if last != nil && continuesReasoningBlock(last, cur) {
+			for k, v := range cur {
+				prev, prevOK := last[k].(string)
+				next, nextOK := v.(string)
+				if prevOK && nextOK && isReasoningTextKey(k) {
+					last[k] = prev + next
+				} else {
+					last[k] = v
+				}
+			}
+			if out, err := json.Marshal(last); err == nil {
+				merged[len(merged)-1] = out
+			}
+			continue
+		}
+		merged = append(merged, raw)
+		last = cur
+	}
+	out, err := json.Marshal(merged)
+	if err != nil {
+		return nil
+	}
+	return nonEmptyJSONArray(string(out))
+}
+
+// continuesReasoningBlock reports whether next extends the block prev started.
+func continuesReasoningBlock(prev, next map[string]any) bool {
+	index, ok := next["index"]
+	return ok && index != nil && prev["index"] == index &&
+		prev["type"] == next["type"]
+}
+
+// isReasoningTextKey reports whether a reasoning detail field holds text that
+// streams in pieces.
+func isReasoningTextKey(key string) bool {
+	return key == "text" || key == "summary" || key == "data"
 }

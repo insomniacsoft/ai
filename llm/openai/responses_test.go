@@ -167,7 +167,7 @@ func newResponsesServer(
 		}))
 }
 
-// TestWireReasoningEffortLevels_Responses confirms each of the six
+// TestWireReasoningEffortLevels_Responses confirms each of the seven
 // ReasoningEffort levels maps to the expected reasoning.effort wire value on
 // the Responses API path.
 func TestWireReasoningEffortLevels_Responses(t *testing.T) {
@@ -182,6 +182,7 @@ func TestWireReasoningEffortLevels_Responses(t *testing.T) {
 		{"medium", ReasoningEffortMedium, "medium"},
 		{"high", ReasoningEffortHigh, "high"},
 		{"xhigh", ReasoningEffortXhigh, "xhigh"},
+		{"max", ReasoningEffortMax, "max"},
 	}
 
 	for _, tt := range tests {
@@ -224,14 +225,14 @@ func TestWireReasoningEffortLevels_Responses(t *testing.T) {
 }
 
 // TestWireReasoningEffortOmittedWhenModelCannotReason_Responses confirms the
-// CanReason gate in responsesClient.preparedParams omits the whole reasoning
+// CanReason gate in ResponsesClient.preparedParams omits the whole reasoning
 // object when the model can't reason, for every level.
 func TestWireReasoningEffortOmittedWhenModelCannotReason_Responses(
 	t *testing.T,
 ) {
 	levels := []ReasoningEffort{
 		ReasoningEffortNone, ReasoningEffortMinimal, ReasoningEffortLow,
-		ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXhigh,
+		ReasoningEffortMedium, ReasoningEffortHigh, ReasoningEffortXhigh, ReasoningEffortMax,
 	}
 
 	for _, effort := range levels {

@@ -31,9 +31,11 @@ type Options struct {
 	endpoint              string
 	apiVersion            string
 	canReason             *bool
+	reasoningEffort       *llmopenai.ReasoningEffort
 	supportsStructuredOut *bool
 	attachments           *bool
 	httpClient            *http.Client
+	responsesOptions      []llmopenai.ResponsesOption
 }
 
 // Option configures Options.
@@ -112,6 +114,13 @@ func WithReasoning(canReason bool) Option {
 	return func(o *Options) { o.canReason = &canReason }
 }
 
+// WithReasoningEffort sets effort for reasoning deployments. ReasoningEffortNone
+// disables reasoning on models that accept it. Unset uses the provider default;
+// deployments without CanReason ignore this option.
+func WithReasoningEffort(effort llmopenai.ReasoningEffort) Option {
+	return func(o *Options) { o.reasoningEffort = &effort }
+}
+
 // WithHTTPClient injects a custom *http.Client, threaded into the OpenAI SDK
 // (and the Azure-auth SDK path) via option.WithHTTPClient. Use it for outbound
 // proxies, custom TLS (private CAs, mTLS), connection-pool tuning, or
@@ -156,6 +165,12 @@ func NewLLM(opts ...Option) llm.LLM {
 	openaiOpts := []llmopenai.Option{
 		llmopenai.WithModel(resolvedModel),
 		llmopenai.WithMaxTokens(options.maxTokens),
+	}
+	if options.reasoningEffort != nil {
+		openaiOpts = append(
+			openaiOpts,
+			llmopenai.WithReasoningEffort(*options.reasoningEffort),
+		)
 	}
 	if options.temperature != nil {
 		openaiOpts = append(
@@ -214,17 +229,7 @@ func NewLLM(opts ...Option) llm.LLM {
 		return llmopenai.NewLLM(openaiOpts...)
 	}
 
-	reqOpts := []option.RequestOption{
-		azure.WithEndpoint(options.endpoint, options.apiVersion),
-	}
-	if options.httpClient != nil {
-		reqOpts = append(reqOpts, option.WithHTTPClient(options.httpClient))
-	}
-	if options.apiKey != "" {
-		reqOpts = append(reqOpts, azure.WithAPIKey(options.apiKey))
-	} else if cred, err := azidentity.NewDefaultAzureCredential(nil); err == nil {
-		reqOpts = append(reqOpts, azure.WithTokenCredential(cred))
-	}
+	reqOpts := azureClientOptions(options)
 
 	// Build a fully-configured openai.Client with Azure auth, then hand it to the
 	// openai package's bare Client implementation. Wrap in tracing here.
@@ -283,6 +288,7 @@ func modelFromOptions(o Options) llm.Model {
 	return m
 }
 
+// findAzureModel selects an exact match or the longest model-name substring.
 func findAzureModel(deployment string, exact bool) (llm.Model, bool) {
 	var best llm.Model
 	var bestLen int
@@ -312,6 +318,9 @@ func buildOpenAIOptions(o Options) llmopenai.Options {
 	var dst llmopenai.Options
 	llmopenai.WithModel(modelFromOptions(o))(&dst)
 	llmopenai.WithMaxTokens(o.maxTokens)(&dst)
+	if o.reasoningEffort != nil {
+		llmopenai.WithReasoningEffort(*o.reasoningEffort)(&dst)
+	}
 	if o.temperature != nil {
 		llmopenai.WithTemperature(*o.temperature)(&dst)
 	}
@@ -328,4 +337,21 @@ func buildOpenAIOptions(o Options) llmopenai.Options {
 		llmopenai.WithTimeout(*o.timeout)(&dst)
 	}
 	return dst
+}
+
+// azureClientOptions configures the shared Azure endpoint and authentication.
+func azureClientOptions(options Options) []option.RequestOption {
+	reqOpts := []option.RequestOption{
+		azure.WithEndpoint(options.endpoint, options.apiVersion),
+	}
+	if options.httpClient != nil {
+		reqOpts = append(reqOpts, option.WithHTTPClient(options.httpClient))
+	}
+	if options.apiKey != "" {
+		reqOpts = append(reqOpts, azure.WithAPIKey(options.apiKey))
+	} else if cred, err := azidentity.NewDefaultAzureCredential(nil); err == nil {
+		reqOpts = append(reqOpts, azure.WithTokenCredential(cred))
+	}
+
+	return reqOpts
 }

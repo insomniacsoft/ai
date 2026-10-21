@@ -122,6 +122,19 @@ func (TextContent) isPart() {}
 type ReasoningContent struct {
 	// Text contains the actual reasoning content.
 	Text string `json:"text"`
+	// ID is the provider-assigned reasoning item identifier.
+	ID string `json:"id,omitempty"`
+	// EncryptedContent preserves opaque reasoning for stateless replay.
+	EncryptedContent string `json:"encrypted_content,omitempty"`
+	// Summary contains the provider's reasoning summary text blocks.
+	Summary []string `json:"summary,omitempty"`
+	// Field names the Chat Completions assistant field the text arrived in,
+	// such as "reasoning" or "reasoning_content", so replay uses the same key.
+	Field string `json:"field,omitempty"`
+	// Details preserves a provider's structured reasoning array verbatim,
+	// such as OpenRouter's reasoning_details, including signatures and
+	// encrypted data in their original order.
+	Details json.RawMessage `json:"details,omitempty"`
 }
 
 // String returns the reasoning content as a string.
@@ -236,7 +249,8 @@ func (m *Message) AppendReasoningContent(delta string) {
 	found := false
 	for i, part := range m.Parts {
 		if c, ok := part.(ReasoningContent); ok {
-			m.Parts[i] = ReasoningContent{Text: c.Text + delta}
+			c.Text += delta
+			m.Parts[i] = c
 			found = true
 			break
 		}
