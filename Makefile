@@ -47,6 +47,8 @@ test: workspace
 		echo "==> test $$dir"; \
 		(cd "$$dir" && go test -short ./...) || exit 1; \
 	done
+	@echo "==> test tests/anthropic (recorded thinking round-trip)"
+	@cd tests && go test -short ./anthropic/...
 
 test-integration: workspace
 	cd tests && go test -timeout 300s ./...
