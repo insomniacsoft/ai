@@ -222,3 +222,72 @@ func TestBetweenToolsReplacesAdaptiveThinkingAndKeepsEffort(t *testing.T) {
 		}
 	}
 }
+
+// TestWithoutEnvironmentIgnoresTheSDKsEnvironmentVariables: with the option,
+// ANTHROPIC_BASE_URL cannot redirect a request and ANTHROPIC_API_KEY and
+// ANTHROPIC_AUTH_TOKEN cannot supply credentials; only WithAPIKey's key is
+// sent. Without it the SDK honours them (the control half).
+func TestWithoutEnvironmentIgnoresTheSDKsEnvironmentVariables(t *testing.T) {
+	var envHits int
+	envSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		envHits++
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, messageOK)
+	}))
+	defer envSrv.Close()
+	t.Setenv("ANTHROPIC_BASE_URL", envSrv.URL)
+	t.Setenv("ANTHROPIC_API_KEY", "env-key")
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "env-token")
+
+	var got http.Header
+	var n int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, messageOK)
+	}))
+	defer srv.Close()
+
+	// The transport records the host the SDK chose before redirecting it, so
+	// the test sees whether ANTHROPIC_BASE_URL was honoured.
+	var chosenHost string
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		n++
+		chosenHost = r.URL.Host
+		r.URL.Scheme, r.URL.Host = "http", srv.Listener.Addr().String()
+		return http.DefaultTransport.RoundTrip(r)
+	})
+	send := func(opts ...Option) {
+		t.Helper()
+		c := NewLLM(append([]Option{
+			WithAPIKey("explicit-key"),
+			WithModel(llm.Model{APIModel: "claude"}),
+			WithHTTPClient(&http.Client{Transport: rt}),
+		}, opts...)...)
+		if _, err := c.SendMessages(context.Background(),
+			[]message.Message{message.NewUserMessage("hi")}, nil); err != nil {
+			t.Fatalf("SendMessages: %v", err)
+		}
+	}
+
+	send(WithoutEnvironment())
+	if chosenHost != "api.anthropic.com" {
+		t.Errorf("with WithoutEnvironment the request was addressed to %q, want api.anthropic.com", chosenHost)
+	}
+	if got.Get("X-Api-Key") != "explicit-key" || got.Get("Authorization") != "" {
+		t.Errorf("credentials sent = x-api-key %q, authorization %q; want only the explicit key",
+			got.Get("X-Api-Key"), got.Get("Authorization"))
+	}
+
+	send()
+	if chosenHost == "api.anthropic.com" {
+		t.Errorf("control: without the option ANTHROPIC_BASE_URL was not honoured; the test proves nothing")
+	}
+	if envHits != 0 || n != 2 {
+		t.Errorf("env server hits = %d, requests = %d", envHits, n)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

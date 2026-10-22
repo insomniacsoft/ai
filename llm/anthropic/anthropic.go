@@ -58,6 +58,7 @@ type Options struct {
 	toolChoice      *llm.ToolChoice
 	builtinTools    []anthropicsdk.ToolUnionParam
 	httpClient      *http.Client
+	noEnvironment   bool
 }
 
 // Option configures Options.
@@ -120,6 +121,19 @@ func WithBedrock(useBedrock bool) Option {
 // transport: the two compose and the shorter deadline wins.
 func WithHTTPClient(c *http.Client) Option {
 	return func(o *Options) { o.httpClient = c }
+}
+
+// WithoutEnvironment stops the SDK reading its environment defaults:
+// ANTHROPIC_BASE_URL, ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
+// ANTHROPIC_PROFILE, federation variables, profile files and
+// ANTHROPIC_CUSTOM_HEADERS. Requests then go to Anthropic's production API
+// with only the key WithAPIKey gives, so an application that owns its
+// credentials cannot have a variable in its process environment send a
+// conversation, or bill a call, somewhere it did not configure. The SDK's
+// default HTTP client (a response-header timeout of ten minutes) is kept
+// unless WithHTTPClient replaces it.
+func WithoutEnvironment() Option {
+	return func(o *Options) { o.noEnvironment = true }
 }
 
 // WithDisableCache disables prompt caching for Anthropic requests.
@@ -278,6 +292,12 @@ func NewLLM(opts ...Option) llm.LLM {
 			option.WithHTTPClient(options.httpClient),
 		)
 	}
+	if options.noEnvironment {
+		clientOpts = append(clientOpts, option.WithoutEnvironmentDefaults())
+		if options.httpClient == nil {
+			clientOpts = append(clientOpts, option.WithHTTPClient(defaultHTTPClient()))
+		}
+	}
 
 	return llm.WithTracing(&Client{
 		options: options,
@@ -287,6 +307,19 @@ func NewLLM(opts ...Option) llm.LLM {
 		Temperature: options.temperature,
 		TopP:        options.topP,
 	})
+}
+
+// defaultHTTPClient mirrors the SDK's own default client, which
+// WithoutEnvironmentDefaults also drops: a clone of the default transport
+// with a response-header timeout, so a server that accepts the connection and
+// never answers cannot hang a request. Streams are unaffected.
+func defaultHTTPClient() *http.Client {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		t = t.Clone()
+		t.ResponseHeaderTimeout = 10 * time.Minute
+		return &http.Client{Transport: t}
+	}
+	return &http.Client{Transport: http.DefaultTransport}
 }
 
 // Model returns the configured LLM model.
