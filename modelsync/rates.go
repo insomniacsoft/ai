@@ -1,6 +1,7 @@
 package modelsync
 
 import (
+	"math"
 	"sort"
 	"strings"
 )
@@ -28,8 +29,24 @@ var (
 	// ImageUnits holds the per-image rate.
 	ImageUnits = map[string]float64{"per_image": 1}
 	// CallUnits keeps the vendor's own per-1k-calls unit; see
-	// hostedtool.Tool.CostPer1KCalls.
-	CallUnits = map[string]float64{"per_1k_calls": 1}
+	// hostedtool.Tool.CostPer1KCalls. A search is one call of a search
+	// tool, so Anthropic's per_1k_searches is the same unit by another name.
+	CallUnits = map[string]float64{"per_1k_calls": 1, "per_1k_searches": 1}
+
+	// CacheReadOfInput is a billing provider's published rule for a cache
+	// read, as a fraction of the model's input rate, for a provider whose
+	// feed entries state no cache-read rate of their own. Keyed by the
+	// provider object an entry is filed under, the one that bills it: an
+	// aggregator filing the same model under its own object bills reads its
+	// own way, and gets no rule here.
+	//
+	// Anthropic prices a cache read at 0.1 times the base input rate
+	// (https://platform.claude.com/docs/en/about-claude/pricing.md, prompt
+	// caching). The same table's write multipliers, 1.25x for the 5-minute
+	// lifetime and 2x for the 1-hour one, match every cache-write rate the
+	// feed does state for Claude, which is what makes the read rule safe to
+	// apply to the input rate it states.
+	CacheReadOfInput = map[string]float64{"anthropic": 0.1}
 )
 
 // variantDims mark a rate as belonging to something other than plain
@@ -182,6 +199,10 @@ type Rate struct {
 	Per float64
 	// Published reports whether the source states the rate at all.
 	Published bool
+	// Derived reports that the source states no rate of its own and Per was
+	// computed from one it does state, by a rule the billing provider
+	// publishes (see CacheReadOfInput). Published is true for such a rate.
+	Derived bool
 }
 
 func selected(
@@ -211,6 +232,10 @@ const cacheWriteTTL = "5m"
 
 // ChatRates selects a chat model's rates.
 //
+// The cache-read rate is the one the entry states, else the billing
+// provider's published rule applied to the input rate (CacheReadOfInput),
+// else unpublished. A stated rate always wins over the rule.
+//
 // The cache-write rate is the one published for the 5-minute lifetime
 // (dims.cache_ttl "5m"), whatever the other lifetimes cost and however many
 // dims they carry. When no rate names that lifetime, the ordinary selection
@@ -225,10 +250,20 @@ func (e Entry) ChatRates() ChatRates {
 		write = selected(withTTL(p, ""), c, TokenUnits, "cache_write_tokens")
 	}
 
+	in := selected(p, c, TokenUnits, "input_tokens", "usage")
+	read := selected(p, c, TokenUnits, "cached_input_tokens")
+	if f, ok := CacheReadOfInput[e.EnclosingProvider]; ok &&
+		!read.Published && in.Published {
+		// Rounded to a billionth of the unit: 3 * 0.1 is not 0.3 in
+		// floating point, and a rate a consumer compares or prints must be.
+		per := math.Round(in.Per*f*1e9) / 1e9
+		read = Rate{Per: per, Published: true, Derived: true}
+	}
+
 	return ChatRates{
-		Input:      selected(p, c, TokenUnits, "input_tokens", "usage"),
+		Input:      in,
 		Output:     selected(p, c, TokenUnits, "output_tokens"),
-		CacheRead:  selected(p, c, TokenUnits, "cached_input_tokens"),
+		CacheRead:  read,
 		CacheWrite: write,
 	}
 }

@@ -24,7 +24,7 @@ func TestRealtimeModelYieldsOneRatePerMetricAndModality(t *testing.T) {
 	}
 }
 
-func TestRealClaudeEntryYieldsStandardTierRatesAndNoCacheRead(t *testing.T) {
+func TestRealClaudeEntryYieldsStandardTierRatesAndADerivedCacheRead(t *testing.T) {
 	e := entriesByID(t, fixture, "anthropic")["claude-sonnet-5"]
 	r := e.ChatRates()
 
@@ -35,13 +35,52 @@ func TestRealClaudeEntryYieldsStandardTierRatesAndNoCacheRead(t *testing.T) {
 		"input":       {r.Input, 2},
 		"output":      {r.Output, 10},
 		"cache write": {r.CacheWrite, 2.5},
+		// The feed states no cache-read rate for Claude; Anthropic's rule
+		// is 0.1 of input.
+		"cache read": {r.CacheRead, 0.2},
 	} {
 		if !c.got.Published || c.got.Per != c.want {
 			t.Errorf("%s = %+v, want %v", name, c.got, c.want)
 		}
 	}
-	if r.CacheRead.Published {
-		t.Errorf("the feed states no cache-read rate for Claude: %+v", r.CacheRead)
+	if !r.CacheRead.Derived || r.Input.Derived {
+		t.Errorf("only the cache read is derived: read %+v, input %+v", r.CacheRead, r.Input)
+	}
+}
+
+// TestCacheReadRuleIsTheBillingProvidersOnly: the rule applies to entries
+// filed under the provider that publishes it, never to the same model filed
+// under another (an aggregator bills reads its own way), and a stated rate
+// always beats it.
+func TestCacheReadRuleIsTheBillingProvidersOnly(t *testing.T) {
+	in := Price{Metric: "input_tokens", Unit: "per_1m_tokens", Amount: 3, Currency: "USD"}
+	read := Price{Metric: "cached_input_tokens", Unit: "per_1m_tokens", Amount: 0.25, Currency: "USD"}
+
+	anthropic := Entry{EnclosingProvider: "anthropic", Provider: "anthropic", Prices: []Price{in}}
+	if r := anthropic.ChatRates().CacheRead; !r.Published || !r.Derived || r.Per != 0.3 {
+		t.Errorf("anthropic, no stated read: %+v, want derived 0.3", r)
+	}
+	aggregator := Entry{EnclosingProvider: "openrouter", Provider: "anthropic", Prices: []Price{in}}
+	if r := aggregator.ChatRates().CacheRead; r.Published {
+		t.Errorf("an aggregator's copy of a Claude model got the rule: %+v", r)
+	}
+	stated := Entry{EnclosingProvider: "anthropic", Prices: []Price{in, read}}
+	if r := stated.ChatRates().CacheRead; !r.Published || r.Derived || r.Per != 0.25 {
+		t.Errorf("a stated read lost to the rule: %+v, want 0.25 as stated", r)
+	}
+	noInput := Entry{EnclosingProvider: "anthropic"}
+	if r := noInput.ChatRates().CacheRead; r.Published {
+		t.Errorf("a rule with no input rate to apply to published %+v", r)
+	}
+}
+
+func TestPerThousandSearchesIsACallRate(t *testing.T) {
+	e := Entry{Kind: "tool", Name: "Web search", ID: "web-search", Prices: []Price{{
+		Metric: "tool_call", Unit: "per_1k_searches", Amount: 10, Currency: "USD",
+		Dims: map[string]string{"tier": "standard"},
+	}}}
+	if r := e.ToolRate(); !r.Published || r.Per != 10 {
+		t.Errorf("tool rate = %+v, want 10 per thousand", r)
 	}
 }
 
