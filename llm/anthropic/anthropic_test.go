@@ -182,3 +182,43 @@ func TestWithHTTPClientTransportUsed(t *testing.T) {
 		t.Error("injected transport was not used for the request")
 	}
 }
+
+// thinkingBody marshals the request the options build, with no messages or
+// tools, for wire assertions on thinking and effort.
+func thinkingBody(t *testing.T, opts ...Option) map[string]any {
+	t.Helper()
+	return toolChoiceBody(t, nil, opts...)
+}
+
+// TestBetweenToolsReplacesAdaptiveThinkingAndKeepsEffort: the option sends
+// thinking {"type":"between_tools"} with the effort still set, never
+// "disabled"; without it the same options send adaptive thinking.
+func TestBetweenToolsReplacesAdaptiveThinkingAndKeepsEffort(t *testing.T) {
+	model := llm.Model{APIModel: "claude-sonnet-5-5", CanReason: true}
+
+	body := thinkingBody(t, WithModel(model), WithMaxTokens(1000),
+		WithReasoningEffort(ReasoningEffortLow), WithThinkingBetweenTools())
+	thinking, _ := body["thinking"].(map[string]any)
+	if thinking["type"] != "between_tools" {
+		t.Errorf("thinking = %v, want between_tools", body["thinking"])
+	}
+	if oc, _ := body["output_config"].(map[string]any); oc["effort"] != "low" {
+		t.Errorf("output_config = %v, want effort low kept", body["output_config"])
+	}
+
+	adaptive := thinkingBody(t, WithModel(model), WithMaxTokens(1000),
+		WithReasoningEffort(ReasoningEffortLow))
+	if th, _ := adaptive["thinking"].(map[string]any); th["type"] != "adaptive" {
+		t.Errorf("without the option thinking = %v, want adaptive", adaptive["thinking"])
+	}
+
+	// No effort, or a model without CanReason: the option sends nothing.
+	for name, opts := range map[string][]Option{
+		"no effort":    {WithModel(model), WithMaxTokens(1000), WithThinkingBetweenTools()},
+		"no CanReason": {WithModel(llm.Model{APIModel: "claude-sonnet-5-5"}), WithMaxTokens(1000), WithReasoningEffort(ReasoningEffortLow), WithThinkingBetweenTools()},
+	} {
+		if th, ok := thinkingBody(t, opts...)["thinking"]; ok {
+			t.Errorf("%s: thinking = %v, want none sent", name, th)
+		}
+	}
+}

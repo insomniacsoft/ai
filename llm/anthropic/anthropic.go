@@ -53,6 +53,7 @@ type Options struct {
 	useBedrock      bool
 	disableCache    bool
 	reasoningEffort *ReasoningEffort
+	betweenTools    bool
 	thinkingBudget  *int64
 	toolChoice      *llm.ToolChoice
 	builtinTools    []anthropicsdk.ToolUnionParam
@@ -130,6 +131,17 @@ func WithDisableCache() Option { return func(o *Options) { o.disableCache = true
 // precedence over adaptive effort. Unset sends no budget.
 func WithThinkingBudget(tokens int64) Option {
 	return func(o *Options) { o.thinkingBudget = &tokens }
+}
+
+// WithThinkingBetweenTools sends thinking.type=between_tools in place of
+// adaptive thinking: the model thinks only between tool calls, at the effort
+// WithReasoningEffort sets. It is how thinking is turned off on a model that
+// refuses thinking.type=disabled (Claude Sonnet 5.5 names between_tools as the
+// way). It applies only together with WithReasoningEffort, on a model with
+// CanReason set that is not a legacy extended-thinking model; a thinking
+// budget takes precedence over it.
+func WithThinkingBetweenTools() Option {
+	return func(o *Options) { o.betweenTools = true }
 }
 
 // WithReasoningEffort sets adaptive thinking effort. Low is the lowest effort
@@ -477,6 +489,11 @@ func (c *Client) preparedMessages(
 		} else {
 			thinkingParam = anthropicsdk.ThinkingConfigParamUnion{
 				OfAdaptive: &anthropicsdk.ThinkingConfigAdaptiveParam{},
+			}
+			if c.options.betweenTools {
+				thinkingParam = anthropicsdk.ThinkingConfigParamUnion{
+					OfBetweenTools: &anthropicsdk.ThinkingConfigBetweenToolsParam{},
+				}
 			}
 			switch *c.options.reasoningEffort {
 			case ReasoningEffortLow:
