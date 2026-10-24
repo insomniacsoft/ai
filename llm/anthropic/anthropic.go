@@ -615,6 +615,7 @@ func (c *Client) SendMessages(
 			}
 
 			content, meta := c.extractContent(*anthropicResponse)
+			meta = c.withOutcome(meta, *anthropicResponse)
 			resp := &llm.Response{
 				Content:   content,
 				ToolCalls: c.toolCalls(*anthropicResponse),
@@ -802,6 +803,141 @@ func (c *Client) extractContent(
 		meta = map[string]any{"anthropic.web_search_results": searchResults}
 	}
 	return content, meta
+}
+
+// webSearchEnabled reports whether the client was built with WithWebSearch.
+func (c *Client) webSearchEnabled() bool {
+	for _, t := range c.options.builtinTools {
+		if t.OfWebSearchTool20250305 != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// withOutcome adds the outcome of a non-streaming call to meta, which may be
+// nil, and returns the result. It always records the stop reason under
+// "anthropic.stop_reason". On a client built with WithWebSearch it also adds
+// the keys of [searchOutcome].
+func (c *Client) withOutcome(
+	meta map[string]any,
+	msg anthropicsdk.Message,
+) map[string]any {
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["anthropic.stop_reason"] = string(msg.StopReason)
+	if c.webSearchEnabled() {
+		for k, v := range searchOutcome(msg) {
+			meta[k] = v
+		}
+	}
+	return meta
+}
+
+// searchOutcome reports what a web search call did, as provider metadata:
+//
+//   - "anthropic.web_search_requests" (int64): the searches Anthropic billed,
+//     present only when the response carries the count, so an absent count is
+//     not mistaken for zero.
+//   - "anthropic.web_search_citations" ([]map[string]any with "url" and
+//     "title"): the web_search_result_location citations, in order.
+//   - "anthropic.web_search_errors" ([]string): the error_code of each search
+//     that failed.
+//   - "anthropic.answer_text" (string): the text blocks without the narration
+//     that precedes a search. Text blocks are joined as they came; a line
+//     break is inserted only where a search sat between two runs of text.
+func searchOutcome(msg anthropicsdk.Message) map[string]any {
+	out := map[string]any{"anthropic.answer_text": answerText(msg)}
+	if msg.Usage.ServerToolUse.JSON.WebSearchRequests.Valid() {
+		out["anthropic.web_search_requests"] =
+			msg.Usage.ServerToolUse.WebSearchRequests
+	}
+	if cites := searchCitations(msg); len(cites) > 0 {
+		out["anthropic.web_search_citations"] = cites
+	}
+	if errs := searchErrors(msg); len(errs) > 0 {
+		out["anthropic.web_search_errors"] = errs
+	}
+	return out
+}
+
+// searchCitations returns the web_search_result_location citations of the
+// text blocks in msg, in the order they appear.
+func searchCitations(msg anthropicsdk.Message) []map[string]any {
+	var cites []map[string]any
+	for _, block := range msg.Content {
+		text, ok := block.AsAny().(anthropicsdk.TextBlock)
+		if !ok {
+			continue
+		}
+		for _, c := range text.Citations {
+			if c.Type != "web_search_result_location" {
+				continue
+			}
+			loc := c.AsWebSearchResultLocation()
+			cites = append(cites, map[string]any{
+				"url":   loc.URL,
+				"title": loc.Title,
+			})
+		}
+	}
+	return cites
+}
+
+// searchErrors returns the error_code of each web_search_tool_result block in
+// msg whose content is a web_search_tool_result_error. It reads the raw
+// content, which holds either a list of results or one error object.
+func searchErrors(msg anthropicsdk.Message) []string {
+	var codes []string
+	for _, block := range msg.Content {
+		result, ok := block.AsAny().(anthropicsdk.WebSearchToolResultBlock)
+		if !ok {
+			continue
+		}
+		var body struct {
+			Type      string `json:"type"`
+			ErrorCode string `json:"error_code"`
+		}
+		err := json.Unmarshal([]byte(result.Content.RawJSON()), &body)
+		if err != nil || body.Type != "web_search_tool_result_error" {
+			continue
+		}
+		codes = append(codes, body.ErrorCode)
+	}
+	return codes
+}
+
+// answerText joins the text blocks of msg that are part of the answer. A text
+// block with no citations that is followed at once by a server tool use is
+// narration before a search and is dropped. Kept blocks are joined without a
+// separator, because a sentence can be split at a citation. A single newline
+// goes where a dropped block or a search sat between two kept runs.
+func answerText(msg anthropicsdk.Message) string {
+	var b strings.Builder
+	pendingBreak := false
+	for i, block := range msg.Content {
+		switch v := block.AsAny().(type) {
+		case anthropicsdk.TextBlock:
+			narration := len(v.Citations) == 0 &&
+				i+1 < len(msg.Content) &&
+				msg.Content[i+1].Type == "server_tool_use"
+			switch {
+			case narration:
+				pendingBreak = pendingBreak || b.Len() > 0
+			case v.Text != "":
+				if pendingBreak {
+					b.WriteString("\n")
+					pendingBreak = false
+				}
+				b.WriteString(v.Text)
+			}
+		case anthropicsdk.ServerToolUseBlock,
+			anthropicsdk.WebSearchToolResultBlock:
+			pendingBreak = pendingBreak || b.Len() > 0
+		}
+	}
+	return b.String()
 }
 
 func (c *Client) toolCalls(msg anthropicsdk.Message) []message.ToolCall {
