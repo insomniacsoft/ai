@@ -177,12 +177,25 @@ The keys vary per provider:
 | Provider | Key | Shape |
 |---|---|---|
 | Anthropic | `anthropic.web_search_results` | `[]map[string]any` — URL, title, page age, encrypted content |
+| Anthropic | `anthropic.web_search_requests` | `int64` — searches billed, from `usage.server_tool_use`; present only when the response reports it |
+| Anthropic | `anthropic.web_search_citations` | `[]map[string]any` — `url`, `title` of each `web_search_result_location` citation |
+| Anthropic | `anthropic.web_search_errors` | `[]string` — `error_code` of each failed search (e.g. `max_uses_exceeded`) |
+| Anthropic | `anthropic.answer_text` | `string` — the text without the narration before each search |
+| Anthropic | `anthropic.stop_reason` | `string` — the raw stop reason (e.g. `pause_turn`), on every call |
 | Gemini | `gemini.grounding` | `map[string]any` — `web_search_queries`, `chunks` (URI/title/domain) |
 | Gemini | `gemini.url_context` | `map[string]any` — retrieved URLs and status |
 | OpenAI | `openai.url_citations` | `[]map[string]any` — URL, title, start/end indices |
 | OpenAI | `openai.web_search_calls` | `[]map[string]any` — one entry per `web_search_call` item: `id`, `status`, `action` (`search`, `open_page`, `find_in_page`), `queries` |
 | Groq | `groq.executed_tools` | `[]map[string]any` — Groq's raw executed-tool entries |
 | xAI | `xai.citations` | `[]map[string]any` — URL, title, start/end indices |
+
+The Anthropic keys beyond `anthropic.web_search_results` are set by
+`SendMessages`, not by streaming or structured output. All of them except
+`anthropic.stop_reason` appear only on a client built with `WithWebSearch`.
+Count billed searches with `anthropic.web_search_requests` rather than by
+counting results, because a search that returns no results is still billed. A
+`pause_turn` stop reason means the turn paused mid-search and should be
+continued.
 
 Built-in tools are **not dispatched through the agent loop** — they don't
 appear as `message.ToolCall` entries and don't go through `registry.Execute`.
