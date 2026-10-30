@@ -421,6 +421,7 @@ func (c *Client) convertTools(
 			Description: anthropicsdk.String(info.Description),
 			InputSchema: anthropicsdk.ToolInputSchemaParam{
 				Properties: info.Parameters,
+				Required:   info.Required,
 			},
 		}
 
