@@ -54,10 +54,10 @@ func TestResponsesUsageExcludesCachedFromInput(t *testing.T) {
 	t.Run("send", func(t *testing.T) {
 		srv := newResponsesServer(t, nil, responsesCachedBody)
 		defer srv.Close()
-		client := NewResponsesLLM(
-			WithResponsesAPIKey("test-key"),
-			WithResponsesBaseURL(srv.URL),
-			WithResponsesModel(llm.Model{APIModel: "gpt-4o-mini"}),
+		client := NewLLM(
+			WithAPIKey("test-key"),
+			WithBaseURL(srv.URL),
+			WithModel(llm.Model{APIModel: "gpt-4o-mini"}),
 		)
 		resp, err := client.SendMessages(context.Background(),
 			[]message.Message{message.NewUserMessage("hi")}, nil)
@@ -76,10 +76,10 @@ func TestResponsesUsageExcludesCachedFromInput(t *testing.T) {
 					responsesCachedBody+"}\n\n")
 			}))
 		defer srv.Close()
-		client := NewResponsesLLM(
-			WithResponsesAPIKey("test-key"),
-			WithResponsesBaseURL(srv.URL),
-			WithResponsesModel(llm.Model{APIModel: "gpt-4o-mini"}),
+		client := NewLLM(
+			WithAPIKey("test-key"),
+			WithBaseURL(srv.URL),
+			WithModel(llm.Model{APIModel: "gpt-4o-mini"}),
 		)
 		var final *llm.Response
 		for ev := range client.StreamResponse(context.Background(),
@@ -108,10 +108,10 @@ func TestResponsesUsageClampsACachedFigureAboveTheTotal(t *testing.T) {
 		`"usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":40},"output_tokens":1}}`
 	srv := newResponsesServer(t, nil, body)
 	defer srv.Close()
-	client := NewResponsesLLM(
-		WithResponsesAPIKey("test-key"),
-		WithResponsesBaseURL(srv.URL),
-		WithResponsesModel(llm.Model{APIModel: "gpt-4o-mini"}),
+	client := NewLLM(
+		WithAPIKey("test-key"),
+		WithBaseURL(srv.URL),
+		WithModel(llm.Model{APIModel: "gpt-4o-mini"}),
 	)
 	resp, err := client.SendMessages(context.Background(),
 		[]message.Message{message.NewUserMessage("hi")}, nil)
@@ -144,10 +144,10 @@ func TestResponsesUsageSeparatesCacheWrites(t *testing.T) {
 		`"output_tokens":29,"output_tokens_details":{"reasoning_tokens":22},"total_tokens":8055}}`
 	srv := newResponsesServer(t, nil, body)
 	defer srv.Close()
-	client := NewResponsesLLM(
-		WithResponsesAPIKey("test-key"),
-		WithResponsesBaseURL(srv.URL),
-		WithResponsesModel(llm.Model{APIModel: "gpt-6-luna"}),
+	client := NewLLM(
+		WithAPIKey("test-key"),
+		WithBaseURL(srv.URL),
+		WithModel(llm.Model{APIModel: "gpt-6-luna"}),
 	)
 	resp, err := client.SendMessages(context.Background(),
 		[]message.Message{message.NewUserMessage("hi")}, nil)

@@ -23,6 +23,7 @@ import (
 	openaisdk "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/respjson"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -73,6 +74,8 @@ type Options struct {
 	reasoningDetailsReplay bool
 	modelBodyFields        []modelBodyField
 	separateReasoningUsage bool
+	store                  *bool
+	builtinTools           []responses.ToolUnionParam
 }
 
 // modelBodyField is a request body field sent only for matching models.
@@ -197,6 +200,9 @@ func WithDisableCache() Option { return func(o *Options) { o.disableCache = true
 // WithReasoningEffort sets effort for reasoning models. None disables reasoning
 // on models that accept it; supported values vary by model. Unset uses the
 // provider default, and models without CanReason ignore this option.
+//
+// Which levels a model accepts varies: gpt-6-astra and gpt-6.1-sol do not accept
+// [ReasoningEffortNone]. The API's message is returned in the error.
 func WithReasoningEffort(effort ReasoningEffort) Option {
 	return func(o *Options) { o.reasoningEffort = &effort }
 }
@@ -329,9 +335,32 @@ type retryableError struct {
 	err *openaisdk.Error
 }
 
-func (e retryableError) Error() string      { return e.err.Error() }
 func (e retryableError) Unwrap() error      { return e.err }
 func (e retryableError) GetStatusCode() int { return e.err.StatusCode }
+
+// Error returns the SDK's status summary followed by the API's own message,
+// param and code. The SDK omits these on purpose, but without them a 400 such
+// as "function tools are not supported with this reasoning effort" reaches the
+// caller as a bare "400 Bad Request".
+func (e retryableError) Error() string {
+	msg := e.err.Error()
+	if e.err.Message == "" {
+		return msg
+	}
+	msg += ": " + e.err.Message
+	var details []string
+	if e.err.Param != "" {
+		details = append(details, "param="+e.err.Param)
+	}
+	if e.err.Code != "" {
+		details = append(details, "code="+e.err.Code)
+	}
+	if len(details) > 0 {
+		msg += " (" + strings.Join(details, ", ") + ")"
+	}
+	return msg
+}
+
 func (e retryableError) GetRetryAfter() string {
 	if e.err.Response != nil {
 		v := e.err.Response.Header.Values("Retry-After")
@@ -375,9 +404,12 @@ type Client struct {
 	client  openaisdk.Client
 }
 
-// NewLLM constructs an OpenAI LLM client. The returned [llm.LLM] is wrapped
-// with [llm.WithTracing], so callers always get tracing spans and metrics.
-func NewLLM(opts ...Option) llm.LLM {
+// NewChatCompletionsLLM constructs a client for the Chat Completions API. It
+// exists for OpenAI-compatible endpoints (xAI, Groq, Together and others) that
+// implement Chat Completions but not the Responses API. For OpenAI itself use
+// [NewLLM]: several OpenAI models reject function tools on Chat Completions.
+// The returned [llm.LLM] is wrapped with [llm.WithTracing].
+func NewChatCompletionsLLM(opts ...Option) llm.LLM {
 	options := Options{}
 	for _, o := range opts {
 		o(&options)
